@@ -1,0 +1,1 @@
+{"dependencies":{"express":"^4.21.2"},"description":"SEREN (Serendipity) — consent-first platform for meaningful spiritual, metaphysical, and consciousness-centered connections. MVP.","engines":{"node":">=22"},"main":"src/server.js","name":"seren-mvp","scripts":{"start":"node src/server.js","test":"node --test tests/"},"type":"module","version":"0.1.0"}
