@@ -718,6 +718,7 @@ async function renderConnect(main) {
 
   function intentionError(msg) {
     const el = $('#cx-intention-err');
+    if (!el) return;
     if (msg) { el.textContent = msg; el.hidden = false; intentionEl.setAttribute('aria-invalid', 'true'); }
     else { el.textContent = ''; el.hidden = true; intentionEl.removeAttribute('aria-invalid'); }
   }
@@ -771,7 +772,13 @@ async function renderConnect(main) {
     matchRegion.scrollIntoView({ behavior: 'smooth', block: 'start' });
     announce('SEREN found a match: ' + proposed.name + '.');
 
-    $('#match-accept').addEventListener('click', async (ev) => {
+    // If the user navigated away while the request was in flight, this view is
+    // detached: drop the stale proposal UI instead of wiring the wrong buttons.
+    const acceptBtn = $('#match-accept');
+    const declineBtn = $('#match-decline');
+    if (!matchRegion.isConnected || !acceptBtn || !declineBtn) return;
+
+    acceptBtn.addEventListener('click', async (ev) => {
       const btn = ev.currentTarget;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Accepting…';
@@ -782,12 +789,12 @@ async function renderConnect(main) {
       } catch (err) {
         btn.disabled = false;
         btn.textContent = 'Accept connection';
-        if (err instanceof ApiError) showBanner(err.message, () => $('#match-accept').click());
+        if (err instanceof ApiError) showBanner(err.message, () => { const b = $('#match-accept'); if (b) b.click(); });
         else throw err;
       }
     });
 
-    $('#match-decline').addEventListener('click', async (ev) => {
+    declineBtn.addEventListener('click', async (ev) => {
       const btn = ev.currentTarget;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Finding another…';
@@ -798,7 +805,7 @@ async function renderConnect(main) {
       } catch (err) {
         btn.disabled = false;
         btn.innerHTML = 'Not quite &mdash; find another';
-        if (err instanceof ApiError) showBanner(err.message, () => $('#match-decline').click());
+        if (err instanceof ApiError) showBanner(err.message, () => { const b = $('#match-decline'); if (b) b.click(); });
         else throw err;
       }
     });
