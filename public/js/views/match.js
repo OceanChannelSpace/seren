@@ -26,7 +26,10 @@ function fillTemplate(text, person) {
   const interest = practices[0] || 'our shared path';
   return text
     .replace(/\{interest\}/gi, interest)
-    .replace(/\{topic\}/gi, 'this path');
+    .replace(/\{practice\}/gi, interest)
+    .replace(/\{topic\}/gi, 'this path')
+    .replace(/\{circle\}/gi, 'circle')
+    .replace(/\{cadence\}/gi, 'now and then');
 }
 
 export async function renderMatchDetail(root, ctx) {

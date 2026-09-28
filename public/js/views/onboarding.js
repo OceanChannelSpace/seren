@@ -93,7 +93,8 @@ export async function renderOnboarding(root, ctx) {
   shell.body.appendChild(stepHost);
   root.appendChild(shell.root);
 
-  // Draft accumulates across steps.
+  // Draft accumulates across steps and survives a reload (session-scoped).
+  const DRAFT_KEY = 'seren.onboarding.draft.v1';
   const draft = {
     name: '', email: '', pronouns: '', region: '',
     practices: [], practicesOther: '', tags: [],
@@ -101,6 +102,13 @@ export async function renderOnboarding(root, ctx) {
     formats: [], localRemote: 'either', languages: '', availability: '',
     about: '', visualIdentity: '', photoUrl: '',
     communityVisible: true, aiMatching: true,
+  };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null');
+    if (saved && typeof saved === 'object') Object.assign(draft, saved);
+  } catch { /* start fresh */ }
+  const persistDraft = () => {
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* private mode */ }
   };
 
   let stepIndex = 0;
@@ -131,7 +139,16 @@ export async function renderOnboarding(root, ctx) {
     return { row, next };
   }
 
-  const goStep = (i) => { stepIndex = i; paintStepper(); renderStep(); window.scrollTo({ top: 0 }); };
+  const goStep = (i) => {
+    stepIndex = i;
+    try { sessionStorage.setItem(DRAFT_KEY + '.step', String(i)); } catch { /* private mode */ }
+    persistDraft();
+    paintStepper(); renderStep(); window.scrollTo({ top: 0 });
+  };
+  try {
+    const savedStep = parseInt(sessionStorage.getItem(DRAFT_KEY + '.step') || '0', 10);
+    if (Number.isInteger(savedStep) && savedStep >= 0 && savedStep < STEPS.length) stepIndex = savedStep;
+  } catch { /* start at step 0 */ }
 
   function renderStep() {
     stepHost.innerHTML = '';
@@ -376,6 +393,10 @@ export async function renderOnboarding(root, ctx) {
 
       const profile = await createProfile(payload);
       setProfileId(profile.id);
+      try {
+        sessionStorage.removeItem(DRAFT_KEY);
+        sessionStorage.removeItem(DRAFT_KEY + '.step');
+      } catch { /* ignore */ }
       toast('Welcome to SEREN — your profile is created.');
       navigate('#/discover');
     } catch (e) {

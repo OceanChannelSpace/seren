@@ -2,7 +2,7 @@
 // The beta gate lives here (not the router) so the invite is a full page.
 
 import { get, set } from '../state.js';
-import { betaEnter, friendlyError } from '../api.js';
+import { betaEnter, fetchMeta, friendlyError } from '../api.js';
 import { el, esc, card, errorBanner, wireSubmit, textInput, field, announce } from '../ui.js';
 import { navigate } from '../router.js';
 
@@ -58,6 +58,14 @@ function renderGate() {
       await betaEnter(code);
       set({ betaEntered: true });
       document.body.classList.remove('beta-locked');
+      // Meta was likely empty before entry (the beta gate 403s /api/meta),
+      // so refresh it now that the device is admitted.
+      try {
+        const meta = await fetchMeta();
+        set({ meta });
+      } catch {
+        /* keep whatever we have; views degrade gracefully */
+      }
       navigate(get('profileId') ? '#/discover' : '#/onboarding');
     } catch (e) {
       banner.show(friendlyError(e));

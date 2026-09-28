@@ -238,6 +238,17 @@ export async function renderDiscover(root, ctx) {
 
   refreshBtn.addEventListener('click', () => { limit = 6; loadMatches(); });
 
+  // Filters apply immediately on change — no dead-end dropdowns.
+  const applyFilters = () => { limit = 6; loadMatches(); };
+  practiceSelect.addEventListener('change', applyFilters);
+  formatSelect.addEventListener('change', applyFilters);
+  locality.node.addEventListener('click', () => { setTimeout(applyFilters, 0); });
+  let intentionTimer = null;
+  intentionInput.addEventListener('input', () => {
+    clearTimeout(intentionTimer);
+    intentionTimer = setTimeout(applyFilters, 700);
+  });
+
   // --- pause banner + initial data ---
   body.insertBefore(loading('Loading…'), pauseWrap);
   try {

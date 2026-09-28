@@ -160,6 +160,11 @@ export async function renderCircleDetail(root, ctx) {
     const { circle, members, pendingRequests } = data;
     body.innerHTML = '';
 
+    // The shell's generic "Circle" heading becomes the circle's name.
+    const titleEl = page.querySelector('.page-title');
+    if (titleEl) titleEl.textContent = circle.name;
+    page.setAttribute('aria-label', circle.name);
+
     const head = card();
     head.appendChild(el(`<p class="circle-kind">${esc(kindLabel(circle.kind))}</p>`));
     head.appendChild(el(`<h2>${esc(circle.name)}</h2>`));
