@@ -139,7 +139,7 @@ test('full user journey persists across real server restarts', { timeout: 90000 
     const base2 = `http://127.0.0.1:${port}`;
 
     // (e) the profile and the accepted introduction persisted with correct statuses
-    const got = await api(base2, 'GET', `/api/profiles/${profileId}`);
+    const got = await api(base2, 'GET', `/api/profiles/${profileId}?viewerId=${profileId}`);
     assert.equal(got.status, 200);
     assert.equal(got.json.name, 'Journey Tester');
     assert.equal(got.json.email, 'journey@example.com');

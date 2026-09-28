@@ -127,13 +127,22 @@ test('GET /api/profiles returns public-safe profiles (no email/consents)', async
   }
 });
 
-test('GET /api/profiles/:id returns the full profile; unknown id → 404', async () => {
+test('GET /api/profiles/:id returns full profile to owner, privacy-filtered view to others', async () => {
   const created = await createProfile();
-  const { status, json } = await api('GET', `/api/profiles/${created.id}`);
+  // Owner view (viewerId === id): full profile including email.
+  const { status, json } = await api('GET', `/api/profiles/${created.id}?viewerId=${created.id}`);
   assert.equal(status, 200);
   assert.equal(json.id, created.id);
   assert.equal(json.email, created.email);
   assert.deepEqual(json.consents, created.consents);
+
+  // Stranger view: no email, no consents — privacy by default.
+  const other = await createProfile({ email: 'other-viewer@example.com', name: 'Other Viewer' });
+  const stranger = await api('GET', `/api/profiles/${created.id}?viewerId=${other.id}`);
+  assert.equal(stranger.status, 200);
+  assert.equal(stranger.json.id, created.id);
+  assert.ok(!('email' in stranger.json), 'stranger view must not include email');
+  assert.ok(!('consents' in stranger.json), 'stranger view must not include consents');
 
   const missing = await api('GET', '/api/profiles/999999');
   assert.equal(missing.status, 404);

@@ -1,6 +1,13 @@
-// SEREN MVP — deterministic matching engine (pure functions, no I/O).
+// SEREN — deterministic matching engine (pure functions, no I/O).
+//
+// Two generations live here:
+//  - findBestMatch / buildIntroNote: legacy MVP single-match flow (kept for
+//    backward compatibility with existing tests and the old endpoint).
+//  - scoreCandidate / findMatches: the current engine. It scores candidates
+//    on transparent, explainable rules and returns qualitative *reasons* —
+//    never an opaque "compatibility" claim, and never a numeric score in UI.
 
-import { STOPWORDS } from './constants.js';
+import { STOPWORDS, PRACTICE_LABELS, INTENTION_LABELS, FORMAT_LABELS } from './constants.js';
 
 const stopwordSet = new Set(STOPWORDS);
 
@@ -18,19 +25,208 @@ export function tokenize(text) {
   return [...new Set(tokens)];
 }
 
+function asArray(v) {
+  return Array.isArray(v) ? v : [];
+}
+
+function intersect(a, b) {
+  const setB = new Set(b);
+  return a.filter((x) => setB.has(x));
+}
+
+function sameRegion(a, b) {
+  if (!a || !b) return false;
+  const na = String(a).toLowerCase().trim();
+  const nb = String(b).toLowerCase().trim();
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  // City-level match: compare the part before the first comma ("Boston, MA" vs "Boston").
+  const cityA = na.split(',')[0].trim();
+  const cityB = nb.split(',')[0].trim();
+  return cityA.length > 2 && cityA === cityB;
+}
+
+/**
+ * Score one candidate against a requester with explainable rules.
+ *
+ * Factors (weights are internal; the UI shows only the reasons):
+ *   shared practices (new taxonomy)      3 each
+ *   shared legacy interests               2 each
+ *   shared intentions                     2 each
+ *   shared intention keywords             1 each
+ *   compatible connection format          2
+ *   local/remote alignment                2
+ *   shared language                       1
+ *
+ * Hard gates (applied by findMatches, not here): self, discovery disabled,
+ * paused, no introductions consent, existing pair, passed, blocked.
+ *
+ * @param {object} requester camelCase profile
+ * @param {object} candidate camelCase profile
+ * @param {string} intentionText free-text intention for keyword overlap
+ * @returns {{score:number, reasons:string[], sharedPractices:string[], sharedIntentions:string[], sharedFormats:string[]}}
+ */
+export function scoreCandidate(requester, candidate, intentionText = '') {
+  const reasons = [];
+  let score = 0;
+
+  const reqPractices = asArray(requester.practices);
+  const candPractices = asArray(candidate.practices);
+  const sharedPractices = intersect(reqPractices, candPractices).filter((p) => PRACTICE_LABELS[p]);
+  if (sharedPractices.length > 0) {
+    score += 3 * sharedPractices.length;
+    const listed = sharedPractices.slice(0, 3).map((p) => PRACTICE_LABELS[p]).join(', ');
+    reasons.push(
+      sharedPractices.length === 1
+        ? `You both care about ${listed}.`
+        : `You share ${sharedPractices.length} practices, including ${listed}.`,
+    );
+  }
+
+  const reqInterests = asArray(requester.interests);
+  const candInterests = asArray(candidate.interests);
+  const sharedInterests = intersect(reqInterests, candInterests)
+    .filter((i) => !sharedPractices.includes(i));
+  if (sharedInterests.length > 0) {
+    score += 2 * sharedInterests.length;
+    if (sharedPractices.length === 0) {
+      reasons.push(`You share an interest in ${sharedInterests.slice(0, 3).join(', ')}.`);
+    }
+  }
+
+  const reqIntentions = asArray(requester.intentions);
+  const candIntentions = asArray(candidate.intentions);
+  const sharedIntentions = intersect(reqIntentions, candIntentions).filter((i) => INTENTION_LABELS[i]);
+  if (sharedIntentions.length > 0) {
+    score += 2 * sharedIntentions.length;
+    const first = INTENTION_LABELS[sharedIntentions[0]];
+    reasons.push(
+      sharedIntentions.length === 1
+        ? `You both chose “${first}.”`
+        : `You both chose “${first}”${sharedIntentions.length > 1 ? ` and ${sharedIntentions.length - 1} more` : ''}.`,
+    );
+  }
+
+  const reqTokens = new Set(tokenize(intentionText || requester.intention || ''));
+  const candTokens = new Set(tokenize(candidate.intention || ''));
+  const sharedKeywords = [...reqTokens].filter((t) => candTokens.has(t)).slice(0, 6);
+  if (sharedKeywords.length > 0) {
+    score += 1 * sharedKeywords.length;
+    reasons.push(`Your intentions both speak of ${sharedKeywords.slice(0, 3).join(', ')}.`);
+  }
+
+  const reqFormats = asArray(requester.prefs?.formats);
+  const candFormats = asArray(candidate.prefs?.formats);
+  const sharedFormats = intersect(reqFormats, candFormats);
+  if (sharedFormats.length > 0) {
+    score += 2;
+    reasons.push(`You’re both open to ${sharedFormats.slice(0, 2).map((f) => (FORMAT_LABELS[f] || f).toLowerCase()).join(' and ')}.`);
+  }
+
+  const reqLR = requester.prefs?.localRemote || 'either';
+  const candLR = candidate.prefs?.localRemote || 'either';
+  const localOk = reqLR === 'either' || candLR === 'either' || reqLR === candLR;
+  if (localOk && (reqLR !== 'either' || candLR !== 'either')) {
+    score += 2;
+    if (reqLR === 'local' || candLR === 'local') {
+      if (sameRegion(requester.region, candidate.region)) {
+        reasons.push(`You’re both in the ${requester.region || candidate.region} area.`);
+      } else {
+        reasons.push('You’re both open to local connection.');
+      }
+    } else if (reqLR === 'remote' || candLR === 'remote') {
+      reasons.push('You’re both open to remote conversation.');
+    }
+  }
+
+  const reqLang = asArray(requester.prefs?.languages).map((l) => String(l).toLowerCase());
+  const candLang = asArray(candidate.prefs?.languages).map((l) => String(l).toLowerCase());
+  if (reqLang.length && candLang.length && reqLang.some((l) => candLang.includes(l))) {
+    score += 1;
+  }
+
+  if (reasons.length === 0) {
+    reasons.push('SEREN surfaced this profile as a gentle stretch beyond your stated preferences.');
+  }
+
+  return { score, reasons, sharedPractices, sharedIntentions, sharedFormats };
+}
+
+/**
+ * Curated matches for a requester.
+ *
+ * @param {object} requester camelCase profile
+ * @param {object[]} candidates camelCase profiles
+ * @param {object} opts
+ *   - intentionText: free text for keyword overlap
+ *   - limit: max results (default 6 — small, curated, never infinite)
+ *   - excludeIds: Set of profile ids to skip (passed, already paired)
+ *   - existingPairKeys: "minId:maxId" keys for non-withdrawn intros
+ *   - blockedIds: Set of profile ids blocked in either direction
+ *   - filters: {connectionType?, locality?, format?, practice?}
+ * @returns {Array<{candidate, score, reasons, sharedPractices, sharedIntentions, sharedFormats}>}
+ */
+export function findMatches(requester, candidates, opts = {}) {
+  const {
+    intentionText = '',
+    limit = 6,
+    excludeIds = new Set(),
+    existingPairKeys = new Set(),
+    blockedIds = new Set(),
+    filters = {},
+  } = opts;
+
+  const reqId = requester.id;
+  const results = [];
+
+  for (const candidate of candidates || []) {
+    if (!candidate || candidate.id === reqId) continue;
+    if (excludeIds.has(candidate.id)) continue;
+    if (blockedIds.has(candidate.id)) continue;
+    const cs = candidate.consents || {};
+    const settings = candidate.consentSettings || {};
+    if (cs.community_visible === false) continue;
+    if (settings.discoveryEnabled === false) continue;
+    if (settings.paused === true) continue;
+
+    const lo = Math.min(reqId, candidate.id);
+    const hi = Math.max(reqId, candidate.id);
+    if (existingPairKeys.has(`${lo}:${hi}`)) continue;
+
+    // Mode filters.
+    if (filters.practice) {
+      const practices = asArray(candidate.practices);
+      if (!practices.includes(filters.practice)) continue;
+    }
+    if (filters.locality && filters.locality !== 'either') {
+      const candLR = candidate.prefs?.localRemote || 'either';
+      if (candLR !== 'either' && candLR !== filters.locality) continue;
+      if (filters.locality === 'local' && !sameRegion(requester.region, candidate.region)) {
+        // For local filtering, require a region in common when both state one.
+        if (requester.region && candidate.region) continue;
+      }
+    }
+    if (filters.format) {
+      const candFormats = asArray(candidate.prefs?.formats);
+      if (candFormats.length && !candFormats.includes(filters.format)) continue;
+    }
+
+    const scored = scoreCandidate(requester, candidate, intentionText);
+    results.push({ candidate, ...scored });
+  }
+
+  results.sort((a, b) => b.score - a.score || a.candidate.id - b.candidate.id);
+  return results.slice(0, Math.max(1, limit));
+}
+
+/* ------------------------------------------------------------------ */
+/* Legacy MVP single-match flow (backward compatible).                 */
+/* ------------------------------------------------------------------ */
+
 /**
  * Deterministic match per the contract:
  *   score = 2 × (shared interests) + 1 × (shared intention keywords)
- * Skips the requester, candidates without community_visible consent,
- * and pairs with an existing non-withdrawn introduction in either direction.
- * Ties break by lowest profile id. A score-0 candidate wins if nothing better
- * exists; null if no eligible candidates.
- *
- * @param {object} requester  camelCase profile {id, interests[], intention, name}
- * @param {object[]} candidates camelCase profiles {id, interests[], intention, name, consents}
- * @param {string} intentionText the intention the request was made with
- * @param {Set<string>} [existingPairKeys] "minId:maxId" keys for non-withdrawn intros
- * @returns {{candidate, sharedInterests: string[], sharedKeywords: string[], score: number} | null}
+ * (unchanged legacy behavior)
  */
 export function findBestMatch(requester, candidates, intentionText, existingPairKeys = new Set()) {
   const requestTokens = new Set(tokenize(intentionText));
@@ -74,16 +270,7 @@ function truncate(text, max = 140) {
 }
 
 /**
- * Warm 1–2 sentence intro note per the contract template:
- * "You and {name} share {n} spiritual {interest|interests}{keyword-bit}.
- *  {first-name-requester}, {intention-echo}"
- * Honest about score-0 matches.
- *
- * @param {object} requester  camelCase profile {name, intention}
- * @param {object} candidate  camelCase profile {name}
- * @param {string[]} sharedInterests
- * @param {string[]} sharedKeywords
- * @returns {string}
+ * Warm 1–2 sentence intro note per the contract template (unchanged).
  */
 export function buildIntroNote(requester, candidate, sharedInterests, sharedKeywords) {
   const candName = candidate?.name || 'your match';

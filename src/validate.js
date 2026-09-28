@@ -1,8 +1,17 @@
-// SEREN MVP — input validation.
+// SEREN — input validation.
 // validateProfileInput(body, {isUpdate}) -> {ok, errors:[{field,message}]}
 // validateIntroRequest(body) -> {ok, errors:[{field,message}]}
+//
+// Extended validators for the current product surface:
+// validateConnectionRequest, validateRespond, validateCircleInput,
+// validateMessageInput, validateReportInput, validatePlanInput.
 
-import { INTERESTS, SEEKING } from './constants.js';
+import {
+  INTERESTS, SEEKING,
+  PRACTICE_VALUES, INTENTION_VALUES,
+  CONNECTION_TYPE_VALUES, CONNECTION_FORMATS, COMMITMENT_LEVELS, TONES,
+  CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, RESPONSE_KINDS, REPORT_REASONS,
+} from './constants.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -77,6 +86,45 @@ function checkIntention(errors, value, required, min, max, field = 'intention') 
   }
 }
 
+function checkShortText(errors, value, field, { required = false, min = 0, max = 200 } = {}) {
+  if (value === undefined || value === null || value === '') {
+    if (required) push(errors, field, `${field} is required`);
+    return;
+  }
+  if (typeof value !== 'string') {
+    push(errors, field, `${field} must be a string`);
+    return;
+  }
+  const len = value.trim().length;
+  if (required && len === 0) push(errors, field, `${field} must not be empty`);
+  else if (len > max) push(errors, field, `${field} must be at most ${max} characters`);
+  else if (len < min) push(errors, field, `${field} must be at least ${min} characters`);
+}
+
+function checkStringArray(errors, value, field, { allowed = null, min = 0, max = 30, required = false } = {}) {
+  if (value === undefined || value === null) {
+    if (required) push(errors, field, `${field} is required`);
+    return;
+  }
+  if (!Array.isArray(value)) {
+    push(errors, field, `${field} must be an array`);
+    return;
+  }
+  if (value.length < min || value.length > max) {
+    push(errors, field, `${field} must contain between ${min} and ${max} items`);
+  }
+  const seen = new Set();
+  for (const item of value) {
+    if (typeof item !== 'string' || (allowed && !allowed.includes(item))) {
+      push(errors, field, `"${String(item)}" is not a valid ${field} option`);
+    } else if (seen.has(item)) {
+      push(errors, field, `"${item}" is duplicated in ${field}`);
+    } else {
+      seen.add(item);
+    }
+  }
+}
+
 function checkConnectionPrefs(errors, value, required) {
   if (value === undefined || value === null) {
     if (required) push(errors, 'connectionPrefs', 'connectionPrefs is required');
@@ -127,6 +175,58 @@ function checkConsents(errors, value, required, requireIntroductions) {
   }
 }
 
+function checkPrefs(errors, value, required) {
+  if (value === undefined || value === null) return;
+  if (!isPlainObject(value)) {
+    push(errors, 'prefs', 'prefs must be an object');
+    return;
+  }
+  if (value.localRemote !== undefined && !['local', 'remote', 'either'].includes(value.localRemote)) {
+    push(errors, 'prefs.localRemote', 'prefs.localRemote must be local, remote, or either');
+  }
+  if (value.formats !== undefined) {
+    checkStringArray(errors, value.formats, 'prefs.formats', { allowed: CONNECTION_FORMATS, max: 5 });
+  }
+  if (value.languages !== undefined) {
+    if (!Array.isArray(value.languages)) push(errors, 'prefs.languages', 'prefs.languages must be an array');
+    else {
+      for (const l of value.languages) {
+        if (typeof l !== 'string' || l.trim().length === 0 || l.trim().length > 40) {
+          push(errors, 'prefs.languages', 'each language must be a non-empty string up to 40 characters');
+          break;
+        }
+      }
+      if (value.languages.length > 10) push(errors, 'prefs.languages', 'choose at most 10 languages');
+    }
+  }
+  if (value.availability !== undefined && value.availability !== null && value.availability !== '') {
+    if (typeof value.availability !== 'string' || value.availability.length > 200) {
+      push(errors, 'prefs.availability', 'prefs.availability must be at most 200 characters');
+    }
+  }
+}
+
+const CONSENT_SETTING_KEYS = [
+  'messagesAfterMutual', 'intentionalRequests', 'groupInvites', 'eventInvites',
+  'collaborationRequests', 'showPractices', 'showRegion', 'showPhoto',
+  'discoveryEnabled', 'paused', 'notifications',
+];
+
+function checkConsentSettings(errors, value) {
+  if (value === undefined || value === null) return;
+  if (!isPlainObject(value)) {
+    push(errors, 'consentSettings', 'consentSettings must be an object');
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    if (!CONSENT_SETTING_KEYS.includes(key)) {
+      push(errors, `consentSettings.${key}`, `unknown consent setting "${key}"`);
+    } else if (typeof value[key] !== 'boolean') {
+      push(errors, `consentSettings.${key}`, `consentSettings.${key} must be a boolean`);
+    }
+  }
+}
+
 /**
  * Validate a profile payload.
  * @param {object} body request body (camelCase)
@@ -147,6 +247,29 @@ export function validateProfileInput(body, { isUpdate = false } = {}) {
   checkConnectionPrefs(errors, body.connectionPrefs, required);
   // introductions consent must be true at creation; on update the user may opt out.
   checkConsents(errors, body.consents, required, !isUpdate);
+
+  // v1 extensions — optional on create, validated when present.
+  if (body.pronouns !== undefined) checkShortText(errors, body.pronouns, 'pronouns', { max: 40 });
+  if (body.region !== undefined) checkShortText(errors, body.region, 'region', { max: 80 });
+  if (body.photoUrl !== undefined) checkShortText(errors, body.photoUrl, 'photoUrl', { max: 500 });
+  if (body.about !== undefined) checkShortText(errors, body.about, 'about', { max: 500 });
+  if (body.visualIdentity !== undefined) {
+    const allowed = ['grounded', 'celestial', 'oceanic', 'minimal', 'warm'];
+    if (typeof body.visualIdentity !== 'string' || !allowed.includes(body.visualIdentity)) {
+      push(errors, 'visualIdentity', `visualIdentity must be one of: ${allowed.join(', ')}`);
+    }
+  }
+  if (body.intentions !== undefined) {
+    checkStringArray(errors, body.intentions, 'intentions', { allowed: INTENTION_VALUES, max: 15 });
+  }
+  if (body.intentionsOther !== undefined) checkShortText(errors, body.intentionsOther, 'intentionsOther', { max: 140 });
+  if (body.practices !== undefined) {
+    checkStringArray(errors, body.practices, 'practices', { allowed: PRACTICE_VALUES, min: 0, max: 27 });
+  }
+  if (body.practicesOther !== undefined) checkShortText(errors, body.practicesOther, 'practicesOther', { max: 140 });
+  if (body.prefs !== undefined) checkPrefs(errors, body.prefs, required);
+  if (body.consentSettings !== undefined) checkConsentSettings(errors, body.consentSettings);
+
   return { ok: errors.length === 0, errors };
 }
 
@@ -166,5 +289,163 @@ export function validateIntroRequest(body) {
     push(errors, 'requesterId', 'requesterId must be a positive integer');
   }
   checkIntention(errors, body.intention, true, 5, 500);
+  return { ok: errors.length === 0, errors };
+}
+
+/** Positive-integer id helper shared by new validators. */
+function checkId(errors, body, field) {
+  if (body[field] === undefined || body[field] === null) {
+    push(errors, field, `${field} is required`);
+  } else if (!Number.isInteger(body[field]) || body[field] <= 0) {
+    push(errors, field, `${field} must be a positive integer`);
+  }
+}
+
+/**
+ * Targeted intentional connection request:
+ * {requesterId, targetId, connectionType, message, format?, commitment?, tone?}
+ */
+export function validateConnectionRequest(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'requesterId');
+  checkId(errors, body, 'targetId');
+  if (body.requesterId === body.targetId) {
+    push(errors, 'targetId', 'you cannot request a connection with yourself');
+  }
+  if (body.connectionType === undefined || body.connectionType === null || body.connectionType === '') {
+    push(errors, 'connectionType', 'connectionType is required');
+  } else if (!CONNECTION_TYPE_VALUES.includes(body.connectionType)) {
+    push(errors, 'connectionType', 'connectionType is not a recognized connection type');
+  }
+  checkShortText(errors, body.message, 'message', { required: true, min: 5, max: 500 });
+  if (body.format !== undefined && body.format !== null && body.format !== '') {
+    if (!CONNECTION_FORMATS.includes(body.format)) {
+      push(errors, 'format', 'format must be a recognized conversation format');
+    }
+  }
+  if (body.commitment !== undefined && body.commitment !== null && body.commitment !== '') {
+    if (!COMMITMENT_LEVELS.includes(body.commitment)) {
+      push(errors, 'commitment', 'commitment must be a recognized commitment level');
+    }
+  }
+  if (body.tone !== undefined && body.tone !== null && body.tone !== '') {
+    if (!TONES.includes(body.tone)) {
+      push(errors, 'tone', 'tone must be a recognized tone');
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/** Recipient response: {response, note?} where response is a RESPONSE_KINDS value. */
+export function validateRespond(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  if (!RESPONSE_KINDS.includes(body.response)) {
+    push(errors, 'response', `response must be one of: ${RESPONSE_KINDS.join(', ')}`);
+  }
+  if (body.note !== undefined && body.note !== null && body.note !== '') {
+    checkShortText(errors, body.note, 'note', { max: 500 });
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Circle create/update:
+ * {name, kind, purpose, privacy?, maxParticipants?, schedule?, agreements?, region?}
+ */
+export function validateCircleInput(body, { isUpdate = false } = {}) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  const required = !isUpdate;
+  checkShortText(errors, body.name, 'name', { required, min: 3, max: 80 });
+  if (body.kind === undefined || body.kind === null) {
+    if (required) push(errors, 'kind', 'kind is required');
+  } else if (!CIRCLE_KIND_VALUES.includes(body.kind)) {
+    push(errors, 'kind', 'kind is not a recognized circle kind');
+  }
+  checkShortText(errors, body.purpose, 'purpose', { required, min: 10, max: 500 });
+  if (body.privacy !== undefined && !CIRCLE_PRIVACY.includes(body.privacy)) {
+    push(errors, 'privacy', `privacy must be one of: ${CIRCLE_PRIVACY.join(', ')}`);
+  }
+  if (body.maxParticipants !== undefined) {
+    if (!Number.isInteger(body.maxParticipants) || body.maxParticipants < 2 || body.maxParticipants > 200) {
+      push(errors, 'maxParticipants', 'maxParticipants must be between 2 and 200');
+    }
+  }
+  if (body.schedule !== undefined) checkShortText(errors, body.schedule, 'schedule', { max: 200 });
+  if (body.agreements !== undefined) checkShortText(errors, body.agreements, 'agreements', { max: 1000 });
+  if (body.region !== undefined) checkShortText(errors, body.region, 'region', { max: 80 });
+  return { ok: errors.length === 0, errors };
+}
+
+/** Circle join request: {profileId, message?} */
+export function validateCircleJoin(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'profileId');
+  if (body.message !== undefined && body.message !== null && body.message !== '') {
+    checkShortText(errors, body.message, 'message', { max: 500 });
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/** Message: {senderId, body} — body 1..2000 chars. */
+export function validateMessageInput(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'senderId');
+  checkShortText(errors, body.body, 'body', { required: true, min: 1, max: 2000 });
+  return { ok: errors.length === 0, errors };
+}
+
+/** Report: {reporterId, reason, details?} */
+export function validateReportInput(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'reporterId');
+  if (!REPORT_REASONS.includes(body.reason)) {
+    push(errors, 'reason', `reason must be one of: ${REPORT_REASONS.join(', ')}`);
+  }
+  if (body.details !== undefined && body.details !== null && body.details !== '') {
+    checkShortText(errors, body.details, 'details', { max: 1000 });
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/** First-connection plan: {createdBy, format?, timeText?, expectations?} */
+export function validatePlanInput(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  // createdBy is derived from the session by the handler; accept it if supplied.
+  if (body.createdBy !== undefined) checkId(errors, body, 'createdBy');
+  if (body.format !== undefined && body.format !== null && body.format !== '') {
+    if (!CONNECTION_FORMATS.includes(body.format)) {
+      push(errors, 'format', 'format must be a recognized conversation format');
+    }
+  }
+  if (body.timeText !== undefined) checkShortText(errors, body.timeText, 'timeText', { max: 200 });
+  if (body.expectations !== undefined) checkShortText(errors, body.expectations, 'expectations', { max: 500 });
   return { ok: errors.length === 0, errors };
 }
