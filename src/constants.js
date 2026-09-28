@@ -59,4 +59,6 @@ export const ERROR_CODES = Object.freeze({
   CONSENT_REQUIRED: 'consent_required',
   NO_MATCH: 'no_match',
   INVALID_TRANSITION: 'invalid_transition',
+  BETA_REQUIRED: 'beta_required',
+  BETA_CODE_INVALID: 'beta_code_invalid',
 });

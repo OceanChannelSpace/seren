@@ -36,9 +36,19 @@ works immediately.
 | `PORT` | `3000` | Port the web server listens on |
 | `DB_PATH` | `./data/seren.db` | SQLite database file location |
 | `SEED_DEMO` | `true` | Seed the demo community on first DB creation (`"false"` disables) |
+| `BETA_CODE` | _(empty)_ | Private beta invite code. When set, visitors must enter the code once before the API serves any data. Leave empty for open access. |
 
 Copy `.env.example` to `.env` to customize (optional — every variable has a
 default). There are no secrets in this application.
+
+## Private beta
+
+Set `BETA_CODE` to any string (e.g. in your hosting provider's environment
+variables) to put SEREN behind a beta invite code. Visitors see a code-entry
+screen; entering the code sets a long-lived `HttpOnly` cookie and unlocks the
+app. The health check (`/api/health`) stays open so hosting platforms can
+probe it. For a network-only beta, share the deploy URL together with the
+code — nothing else is needed.
 
 ## Primary user flow
 

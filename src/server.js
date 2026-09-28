@@ -3,6 +3,7 @@
 
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { ERROR_CODES, VALID_TRANSITIONS } from './constants.js';
 import { validateProfileInput, validateIntroRequest } from './validate.js';
@@ -25,6 +26,78 @@ import {
 
 export const app = express();
 app.use(express.json({ limit: '256kb' }));
+
+// ---------- private beta gate ----------
+// When BETA_CODE is set (non-empty), every /api/* route except the health
+// check and the beta endpoints themselves requires a valid beta cookie.
+// The static app shell stays servable — the frontend renders a code-entry
+// gate when locked. (The repo is public, so hiding the JS buys nothing;
+// the API data is the protected asset.)
+const BETA_CODE = (process.env.BETA_CODE || '').trim();
+const BETA_MODE = BETA_CODE.length > 0;
+const BETA_COOKIE = 'seren_beta';
+const betaTokens = new Set(); // issued tokens; cleared on restart (re-entry is cheap)
+
+function sha256(s) {
+  return createHash('sha256').update(s, 'utf8').digest();
+}
+
+function betaCodeMatches(provided) {
+  if (typeof provided !== 'string' || provided.length === 0) return false;
+  const a = sha256(provided.trim());
+  const b = sha256(BETA_CODE);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function readBetaCookie(req) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === BETA_COOKIE) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return null;
+}
+
+function hasBetaAccess(req) {
+  if (!BETA_MODE) return true;
+  const token = readBetaCookie(req);
+  return token !== null && betaTokens.has(token);
+}
+
+const BETA_OPEN_PATHS = new Set(['/api/health', '/api/beta/status', '/api/beta/enter']);
+
+app.use((req, res, next) => {
+  if (!BETA_MODE) return next();
+  if (BETA_OPEN_PATHS.has(req.path)) return next();
+  if (hasBetaAccess(req)) return next();
+  if (req.path.startsWith('/api/')) {
+    return err(res, 403, ERROR_CODES.BETA_REQUIRED,
+      'SEREN is in private beta. Enter your beta invite code to continue.');
+  }
+  return next(); // app shell loads; frontend shows the code gate
+});
+
+app.get('/api/beta/status', (req, res) => {
+  res.json({ beta: BETA_MODE, entered: hasBetaAccess(req) });
+});
+
+app.post('/api/beta/enter', (req, res) => {
+  if (!BETA_MODE) return res.json({ entered: true });
+  const code = req.body && req.body.code;
+  if (!betaCodeMatches(code)) {
+    return err(res, 403, ERROR_CODES.BETA_CODE_INVALID,
+      'That beta code did not match. Check it and try again.');
+  }
+  const token = randomBytes(32).toString('hex');
+  betaTokens.add(token);
+  res.setHeader('Set-Cookie',
+    `${BETA_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=31536000`);
+  return res.json({ entered: true });
+});
 
 // ---------- helpers ----------
 
