@@ -78,6 +78,12 @@ Base: `/api`. All JSON. Error shape:
 | POST | `/api/introductions/request` | `{requesterId,intention}` | 201 `{introduction, proposed:{id,name,interests,intention}, scoreBreakdown:{sharedInterests,sharedKeywords,score}}` | 400 `validation_error`, 404 `requester_not_found`, 403 `consent_required` (requester hasn't opted into introductions), 404 `no_match` |
 | GET | `/api/introductions?profileId=` | query required | 200 `{introductions:[{id,requesterId,proposedId,requesterName,proposedName,intention,note,score,status,createdAt}]}` | 400 `validation_error` |
 | POST | `/api/introductions/:id/accept` | — | 200 introduction | 404, 409 `invalid_transition` |
+| GET | `/api/beta/status` | — | 200 `{beta:bool, entered:bool}` (always open, even in beta mode) | — |
+| POST | `/api/beta/enter` | `{code}` | 200 `{entered:true}` + `HttpOnly` beta cookie | 403 `beta_code_invalid` |
+
+When the server runs with `BETA_CODE` set, every endpoint above except
+`/api/health`, `/api/beta/status`, and `/api/beta/enter` returns
+403 `beta_required` unless the request carries a valid beta cookie.
 | POST | `/api/introductions/:id/decline` | — | 200 introduction | 404, 409 `invalid_transition` |
 | POST | `/api/introductions/:id/withdraw` | — | 200 introduction | 404, 409 `invalid_transition` |
 

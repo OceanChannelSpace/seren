@@ -489,3 +489,18 @@ a:hover { color: var(--ink); }
   .card { padding: 1.25rem; }
   .btn-row .btn { flex: 1 1 100%; }
 }
+
+/* ---------- private beta gate ---------- */
+
+.beta-gate { max-width: 34rem; margin: 3rem auto; text-align: center; }
+.beta-eyebrow {
+  text-transform: uppercase; letter-spacing: 0.18em; font-size: 0.75rem;
+  color: var(--gold-deep); margin-bottom: 0.5rem;
+}
+.beta-gate form { margin-top: 1.5rem; text-align: left; }
+.beta-gate #beta-submit { width: 100%; margin-top: 0.75rem; }
+
+/* While the beta gate is up, hide app chrome so the invite is the whole page. */
+body.beta-locked .site-header nav,
+body.beta-locked .site-header #start-over,
+body.beta-locked .site-footer { display: none; }

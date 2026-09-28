@@ -113,11 +113,72 @@ async function api(method, path, body) {
   try { data = await res.json(); } catch (e) { /* non-JSON body */ }
   if (!res.ok) {
     const err = (data && data.error) || {};
+    if (res.status === 403 && err.code === 'beta_required') lockBeta();
     throw new ApiError('http', res.status, err.code || null,
       err.message || ('Request failed (HTTP ' + res.status + ').'),
       err.details || null);
   }
   return data;
+}
+
+/* ---------------- private beta gate ---------------- */
+/* When the server runs with BETA_CODE set, the API requires a beta cookie.
+   The shell below collects the invite code and reloads once admitted. */
+
+let betaLocked = false;
+
+function lockBeta() {
+  if (betaLocked) return;
+  betaLocked = true;
+  document.body.classList.add('beta-locked');
+  render();
+}
+
+async function checkBeta() {
+  let status = null;
+  try {
+    const res = await fetch(API_BASE + '/beta/status');
+    status = await res.json();
+  } catch (e) { /* server unreachable: let normal error paths handle it */ }
+  if (status && status.beta && !status.entered) lockBeta();
+  else document.body.classList.remove('beta-locked');
+}
+
+function renderBetaGate(main) {
+  main.innerHTML =
+    '<div class="card beta-gate">' +
+      '<p class="beta-eyebrow">&#10022; Private beta</p>' +
+      '<h1>Welcome to SEREN</h1>' +
+      '<p>SEREN is currently in a private beta for a small circle. Enter your beta invite code to continue.</p>' +
+      '<form id="beta-form" novalidate>' +
+        '<label class="field"><span class="field-label">Beta invite code</span>' +
+        '<input id="beta-code" name="code" type="text" inputmode="text" autocomplete="off" ' +
+        'placeholder="Enter your invite code" required></label>' +
+        '<p id="beta-error" class="field-error" role="alert" hidden></p>' +
+        '<button type="submit" class="btn btn-primary" id="beta-submit">Enter beta</button>' +
+      '</form>' +
+    '</div>';
+  const form = $('#beta-form');
+  const input = $('#beta-code');
+  const errP = $('#beta-error');
+  input.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#beta-submit');
+    btn.disabled = true;
+    errP.hidden = true;
+    try {
+      await api('POST', '/beta/enter', { code: input.value });
+      betaLocked = false;
+      location.reload(); // pick up the freshly issued beta cookie
+    } catch (err) {
+      btn.disabled = false;
+      errP.textContent = err instanceof ApiError ? err.message : 'Something went wrong. Try again.';
+      errP.hidden = false;
+      input.focus();
+      input.select();
+    }
+  });
 }
 
 /* ---------------- failure banner (global, dismissible, retryable) ---------------- */
@@ -214,6 +275,12 @@ function currentPath() {
 
 function render() {
   hideBanner();
+  const main = $('#main');
+  if (betaLocked) {
+    renderBetaGate(main);
+    $('#main').focus({ preventScroll: true });
+    return;
+  }
   const path = currentPath();
   $$('[data-nav]').forEach(a => {
     const key = a.getAttribute('data-nav');
@@ -222,7 +289,6 @@ function render() {
     else a.removeAttribute('aria-current');
   });
   const view = routes[path] || renderLanding;
-  const main = $('#main');
   main.innerHTML = '';
   view(main).catch(err => {
     if (err instanceof ApiError) {
@@ -1046,4 +1112,4 @@ $('#start-over').addEventListener('click', () => {
 
 /* ---------------- boot ---------------- */
 
-render();
+checkBeta().then(() => render()).catch(() => render());
