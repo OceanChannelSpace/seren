@@ -15,8 +15,13 @@ import {
   validateProfileInput, validateIntroRequest, validateConnectionRequest,
   validateRespond, validateCircleInput, validateCircleJoin,
   validateMessageInput, validateReportInput, validatePlanInput,
+  validateGuideStart, validateGuideAnswer,
 } from './validate.js';
 import { findBestMatch, buildIntroNote, findMatches } from './match.js';
+import {
+  parseIntent, selectFollowUps, answerQuestion, buildProposals,
+  remainingQuestions, getQuestionDef,
+} from './guide.js';
 import {
   db,
   hasSeedProfiles,
@@ -58,6 +63,9 @@ import {
   listCircleRequests,
   setCircleRequestStatus,
   getCircleRequest,
+  createGuideSession,
+  getGuideSession,
+  updateGuideSession,
 } from './db.js';
 
 export const app = express();
@@ -828,6 +836,105 @@ app.post('/api/reports', (req, res) => {
     details: req.body.details || '',
   });
   res.status(201).json({ report });
+});
+
+// ---------- guide (AI-superconnector flow) ----------
+
+function guideSessionView(session, profile) {
+  const parsed = { ...session.parsed, requestText: session.requestText };
+  const questions = selectFollowUps(parsed, profile)
+    .filter((q) => !(q.id in session.answers));
+  return {
+    id: session.id,
+    requestText: session.requestText,
+    parsed,
+    answers: session.answers,
+    questions,
+    status: session.status,
+    createdAt: session.createdAt,
+  };
+}
+
+function guideProposals(profile, session) {
+  const parsed = { ...session.parsed, requestText: session.requestText };
+  const passed = getPassedIds(profile.id);
+  const blockedIds = new Set(
+    db.prepare('SELECT blocked_id AS id FROM blocks WHERE blocker_id = ? UNION SELECT blocker_id AS id FROM blocks WHERE blocked_id = ?')
+      .all(profile.id, profile.id).map((r) => r.id),
+  );
+  return buildProposals(profile, parsed, session.answers, {
+    candidates: listCandidateProfiles(),
+    blockedIds,
+    passedIds: new Set(passed),
+    existingPairKeys: getNonWithdrawnPairKeys(),
+    visibleProfile: (id, viewerId) => getVisibleProfile(id, viewerId),
+  });
+}
+
+app.post('/api/guide/sessions', (req, res) => {
+  const { ok, errors } = validateGuideStart(req.body);
+  if (!ok) return validationErr(res, errors);
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+
+  const text = String(req.body.text).trim();
+  const parsed = parseIntent(text);
+  const session = createGuideSession({ profileId: profile.id, requestText: text, parsed });
+  res.status(201).json({ session: guideSessionView(session, profile) });
+});
+
+app.post('/api/guide/sessions/:id/answer', (req, res) => {
+  const { ok, errors } = validateGuideAnswer(req.body);
+  if (!ok) return validationErr(res, errors);
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+
+  const sessionId = parseId(req.params.id);
+  const session = sessionId === null ? null : getGuideSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Guide session not found.');
+  if (session.profileId !== profile.id) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN, 'This guide session belongs to another profile.');
+  }
+  if (session.status === 'complete') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE, 'This guide session is already complete.');
+  }
+
+  const questionId = String(req.body.questionId).trim();
+  const def = getQuestionDef(questionId);
+  if (!def) return err(res, 400, ERROR_CODES.VALIDATION_ERROR, `Unknown question: ${questionId}.`);
+
+  const view = guideSessionView(session, profile);
+  let answers;
+  try {
+    answers = answerQuestion({ answers: session.answers, questions: view.questions }, questionId, req.body.value);
+  } catch (e) {
+    return err(res, 400, ERROR_CODES.VALIDATION_ERROR, e.message);
+  }
+  const updated = updateGuideSession(session.id, { answers });
+
+  const remaining = remainingQuestions({ answers, questions: view.questions });
+  if (remaining.length === 0) {
+    const done = updateGuideSession(session.id, { status: 'complete' });
+    const proposals = guideProposals(profile, done);
+    return res.json({
+      complete: true,
+      session: guideSessionView(done, profile),
+      proposals,
+    });
+  }
+  res.json({ complete: false, session: guideSessionView(updated, profile) });
+});
+
+app.get('/api/guide/sessions/:id', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+  const sessionId = parseId(req.params.id);
+  const session = sessionId === null ? null : getGuideSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Guide session not found.');
+  if (session.profileId !== profile.id) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN, 'This guide session belongs to another profile.');
+  }
+  res.json({ session: guideSessionView(session, profile) });
 });
 
 // ---------- static frontend ----------

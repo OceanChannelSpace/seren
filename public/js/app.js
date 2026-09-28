@@ -4,6 +4,7 @@ import { get, set } from './state.js';
 import { addRoute, startRouter } from './router.js';
 import { betaStatus, fetchMeta } from './api.js';
 import { renderWelcome } from './views/welcome.js';
+import { renderHome } from './views/home.js';
 import { renderOnboarding } from './views/onboarding.js';
 import { renderDiscover } from './views/discover.js';
 import { renderMatchDetail } from './views/match.js';
@@ -32,7 +33,8 @@ async function boot() {
     set({ meta: { practices: [], intentions: [], connectionTypes: [], connectionFormats: [], commitmentLevels: [], tones: [], circleKinds: [], circlePrivacy: [], requestTemplates: [], exploreTopics: [], responseKinds: [] } });
   }
 
-  addRoute('/', renderWelcome, { title: 'Welcome to SEREN' });
+  // '/' is the guided home for signed-in members, the welcome landing otherwise.
+  addRoute('/', renderHome, { title: 'Welcome to SEREN' });
   addRoute('/welcome', renderWelcome, { title: 'Welcome to SEREN' });
   addRoute('/onboarding', renderOnboarding, { title: 'Create your profile', requiresBeta: true });
   addRoute('/discover', renderDiscover, { title: 'Discover', requiresBeta: true, requiresProfile: true });

@@ -932,3 +932,26 @@ body.beta-locked .site-footer { display: none; }
   padding: 1rem;
 }
 .inline-form .btn-row { margin-top: 0.9rem; }
+
+/* ---------- guided home (superconnector) ---------- */
+.guide-hero .page-title { max-width: 34rem; line-height: 1.25; }
+.guide-pane { display: grid; gap: 1.25rem; margin-top: 1.5rem; }
+.guide-starters h3 { margin: 0 0 0.9rem; font-size: 1rem; color: var(--seafoam); }
+.guide-starters .chip-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.guide-starters .chip { text-align: left; font-size: 0.9rem; }
+.guide-secondary { color: var(--mist-dim); font-size: 0.92rem; margin: 0.5rem 0 0; }
+.guide-secondary a { color: var(--seafoam); }
+.proposal-card { display: grid; gap: 0.25rem; }
+.proposal-label {
+  font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--seafoam); margin: 0.9rem 0 0;
+}
+.first-step {
+  margin-top: 1rem; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--seafoam-pale); padding: 0.9rem 1.1rem;
+}
+.first-step h4 {
+  margin: 0 0 0.35rem; font-size: 0.85rem; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--seafoam);
+}
+.first-step p { margin: 0; color: var(--mist); font-size: 0.95rem; }

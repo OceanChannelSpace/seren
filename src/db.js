@@ -196,8 +196,7 @@ function migrateToV1() {
 }
 
 const userVersion = db.prepare('PRAGMA user_version').get().user_version;
-if (userVersion < 1) {
-  migrateToV1();
+if (userVersion < 1) {  migrateToV1();
   // Backfill: map legacy consents into the richer consent_settings shape.
   const rows = db.prepare('SELECT id, consents FROM profiles').all();
   const upd = db.prepare('UPDATE profiles SET consent_settings = ? WHERE id = ?');
@@ -207,6 +206,27 @@ if (userVersion < 1) {
     upd.run(JSON.stringify(defaultConsentSettings(legacy)), r.id);
   }
   db.exec('PRAGMA user_version = 1');
+}
+
+// v2: guide sessions for the AI-superconnector flow + profile values.
+function migrateToV2() {
+  addColumnIfMissing('profiles', 'values_json', 'TEXT NOT NULL DEFAULT \'[]\'');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS guide_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL,
+      request_text TEXT NOT NULL,
+      parsed_json TEXT NOT NULL DEFAULT '{}',
+      answers_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_guide_sessions_profile ON guide_sessions(profile_id)');
+}
+if (userVersion < 2) {
+  migrateToV2();
+  db.exec('PRAGMA user_version = 2');
 }
 
 // ---------- defaults ----------
@@ -270,6 +290,7 @@ function toProfile(row) {
     intentionsOther: parseJson(row.intentions_other ?? '""', ''),
     practices: parseJson(row.practices, []),
     practicesOther: row.practices_other || '',
+    values: parseJson(row.values_json, []),
     prefs,
     consentSettings,
     isSeed: row.is_seed === 1,
@@ -438,6 +459,7 @@ export function updateProfile(id, fields) {
   if (fields.intentionsOther !== undefined) { sets.push('intentions_other = ?'); params.push(str(fields.intentionsOther)); }
   if (fields.practices !== undefined) { sets.push('practices = ?'); params.push(JSON.stringify(fields.practices)); }
   if (fields.practicesOther !== undefined) { sets.push('practices_other = ?'); params.push(str(fields.practicesOther)); }
+  if (fields.values !== undefined) { sets.push('values_json = ?'); params.push(JSON.stringify(fields.values)); }
   if (fields.prefs !== undefined) {
     sets.push('prefs = ?'); params.push(JSON.stringify({ ...existing.prefs, ...fields.prefs }));
   }
@@ -671,6 +693,46 @@ export function createReport({ reporterId, reportedId, reason, details }) {
     VALUES (?, ?, ?, ?, 'open', ?)
   `).run(reporterId, reportedId, reason, (details || '').trim(), now);
   return { id: Number(result.lastInsertRowid), status: 'open', createdAt: now };
+}
+
+// ---------- guide sessions ----------
+
+function toGuideSession(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    requestText: row.request_text,
+    parsed: parseJson(row.parsed_json, {}),
+    answers: parseJson(row.answers_json, {}),
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export function createGuideSession({ profileId, requestText, parsed }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO guide_sessions (profile_id, request_text, parsed_json, answers_json, status, created_at)
+    VALUES (?, ?, ?, '{}', 'open', ?)
+  `).run(profileId, requestText, JSON.stringify(parsed || {}), now);
+  return getGuideSession(Number(result.lastInsertRowid));
+}
+
+export function getGuideSession(id) {
+  return toGuideSession(db.prepare('SELECT * FROM guide_sessions WHERE id = ?').get(id));
+}
+
+export function updateGuideSession(id, { answers, status }) {
+  const existing = getGuideSession(id);
+  if (!existing) return null;
+  const next = {
+    answers: answers !== undefined ? answers : existing.answers,
+    status: status !== undefined ? status : existing.status,
+  };
+  db.prepare('UPDATE guide_sessions SET answers_json = ?, status = ? WHERE id = ?')
+    .run(JSON.stringify(next.answers), next.status, id);
+  return getGuideSession(id);
 }
 
 // ---------- messages ----------

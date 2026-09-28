@@ -269,6 +269,21 @@ export function validateProfileInput(body, { isUpdate = false } = {}) {
   if (body.practicesOther !== undefined) checkShortText(errors, body.practicesOther, 'practicesOther', { max: 140 });
   if (body.prefs !== undefined) checkPrefs(errors, body.prefs, required);
   if (body.consentSettings !== undefined) checkConsentSettings(errors, body.consentSettings);
+  // v2: connection values from the guide "depth" question — short free-form strings.
+  if (body.values !== undefined) {
+    if (!Array.isArray(body.values)) {
+      push(errors, 'values', 'values must be an array');
+    } else if (body.values.length > 6) {
+      push(errors, 'values', 'values must contain at most 6 items');
+    } else {
+      for (const v of body.values) {
+        if (typeof v !== 'string' || v.trim().length === 0 || v.length > 40) {
+          push(errors, 'values', 'each value must be a short string (1–40 characters)');
+          break;
+        }
+      }
+    }
+  }
 
   return { ok: errors.length === 0, errors };
 }
@@ -411,6 +426,32 @@ export function validateMessageInput(body) {
   }
   checkId(errors, body, 'senderId');
   checkShortText(errors, body.body, 'body', { required: true, min: 1, max: 2000 });
+  return { ok: errors.length === 0, errors };
+}
+
+/** Guide session start: {profileId, text} — text 10..500 chars. */
+export function validateGuideStart(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'profileId');
+  checkShortText(errors, body.text, 'text', { required: true, min: 10, max: 500 });
+  return { ok: errors.length === 0, errors };
+}
+
+/** Guide answer: {profileId, questionId, value?} — value null/'' = skip. */
+export function validateGuideAnswer(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'profileId');
+  if (typeof body.questionId !== 'string' || body.questionId.trim() === '') {
+    push(errors, 'questionId', 'questionId is required');
+  }
   return { ok: errors.length === 0, errors };
 }
 
