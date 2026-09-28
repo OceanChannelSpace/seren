@@ -53,7 +53,7 @@ export async function renderHome(root, ctx) {
     'Who — or what kind of connection — would feel meaningful right now?',
     'Begin here',
   );
-  shell.root.classList.add('guide-hero');
+  shell.classList.add('guide-hero');
   root.appendChild(shell);
   const banner = errorBanner();
   body.appendChild(banner.node);
