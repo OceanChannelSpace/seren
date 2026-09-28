@@ -336,6 +336,8 @@ const PRACTICE_TO_TYPE = {
   'journaling': 'peer-learning-exchange',
 };
 
+const PRACTICE_LABELS = new Map(PRACTICES.map((p) => [p.value, p.label]));
+
 // Concrete, gentle first-interaction suggestions per connection type.
 // No outcome promises, no clinical or therapeutic language.
 const FIRST_STEPS = {
@@ -362,8 +364,14 @@ const FIRST_STEPS = {
 };
 const GENERIC_FIRST_STEP = 'Start with one honest message about what you are hoping for, and one question for them — then see what unfolds.';
 
-export function suggestedFirstStep(connectionType) {
-  return FIRST_STEPS[connectionType] || GENERIC_FIRST_STEP;
+export function suggestedFirstStep(connectionType, sharedPractices = []) {
+  const base = FIRST_STEPS[connectionType] || GENERIC_FIRST_STEP;
+  const practiceValue = (sharedPractices || [])[0];
+  const practiceLabel = practiceValue ? PRACTICE_LABELS.get(practiceValue) : null;
+  if (practiceLabel) {
+    return `${base} Begin from what you already share — ${practiceLabel.toLowerCase()} — and see where the conversation goes.`;
+  }
+  return base;
 }
 
 function chooseConnectionType(parsed, sharedPractices) {
@@ -440,7 +448,7 @@ export function buildProposals(profile, parsed, answers = {}, deps = {}) {
       whyItFits: m.reasons,
       sharedPractices: m.sharedPractices,
       sharedIntentions: m.sharedIntentions,
-      suggestedFirst: suggestedFirstStep(connectionType),
+      suggestedFirst: suggestedFirstStep(connectionType, m.sharedPractices),
     };
   });
 }

@@ -238,8 +238,8 @@ export async function renderHome(root, ctx) {
       pane.appendChild(emptyState({
         title: 'Nothing surfaced this time.',
         body: 'That is okay — not every moment has a match. Try different words, or browse quietly for a while.',
-        actionLabel: 'Open Discover',
-        actionHref: '#/discover',
+        actionLabel: 'Start over',
+        actionHref: '#/',
       }));
     }
     for (const p of list) {
@@ -290,6 +290,11 @@ export async function renderHome(root, ctx) {
       c.remove();
       announce('Suggestion dismissed.');
       toast('Set aside quietly. Nothing was sent.');
+      const remaining = c.closest('.guide-pane')?.querySelectorAll('.proposal-card');
+      if (remaining && !remaining.length) {
+        const again = el(`<p class="guide-secondary">Take your time — <a href="#/">ask again</a> whenever you like, or <a href="#/discover">browse quietly</a>.</p>`);
+        c.closest('.guide-pane').appendChild(again);
+      }
     });
     actions.appendChild(reqBtn);
     actions.appendChild(notNow);

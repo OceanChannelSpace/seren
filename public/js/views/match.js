@@ -169,9 +169,10 @@ export async function renderMatchDetail(root, ctx) {
       tplToggle.textContent = tplList.hidden ? 'Use a template' : 'Hide templates';
     });
     for (const tpl of templates) {
+      const preview = fillTemplate(tpl.text, person);
       const b = el(`<button type="button" class="template-card card">
         <h3>${esc(tpl.label)}</h3>
-        <p>${esc(tpl.text.length > 140 ? tpl.text.slice(0, 140) + '…' : tpl.text)}</p>
+        <p>${esc(preview.length > 140 ? preview.slice(0, 140) + '…' : preview)}</p>
       </button>`);
       b.addEventListener('click', () => {
         messageInput.value = fillTemplate(tpl.text, person);
