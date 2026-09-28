@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SEREN – Turn intention into a welcomed connection</title>
+  <style>
+    :root {
+      --bg: #050816;
+      --bg-alt: #0b1020;
+      --card-bg: rgba(19, 26, 46, 0.9);
+      --accent: #8b5cf6;
+      --accent-soft: #a855f7;
+      --accent-2: #22c7b8;
+      --accent-gold: #facc6b;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --danger: #f97373;
+      --border: rgba(148, 163, 184, 0.4);
+      --shadow-soft: 0 18px 40px rgba(15, 23, 42, 0.9);
+      --radius-lg: 18px;
+      --radius-md: 12px;
+      --radius-pill: 999px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top, #111827 0, #020617 40%, #000000 100%);
+      min-height: 100vh;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .starfield {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        radial-gradient(circle at 10% 20%, rgba(148, 163, 184, 0.18) 0, transparent 40%),
+        radial-gradient(circle at 80% 0%, rgba(79, 70, 229, 0.18) 0, transparent 45%),
+        radial-gradient(circle at 50% 100%, rgba(34, 197, 175, 0.12) 0, transparent 40%);
+      opacity: 0.9;
+      z-index: -1;
+    }
+
+    .page {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 24px 16px 80px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #facc6b 0, #22c7b8 28%, #4c1d95 65%, #020617 100%);
+      box-shadow: 0 0 24px rgba(250, 204, 107, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: #f9fafb;
+    }
+
+    .brand-title {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .brand-title h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .brand-title span {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .nav-btn {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      background: radial-gradient(circle at top, rgba(15, 23, 42, 0.8), rgba(15, 23, 42, 0.95));
+      color: var(--muted);
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nav-btn.active {
+      border-color: var(--accent);
+      color: var(--text);
+      background: radial-gradient(circle at top, rgba(55, 48, 163, 0.9), rgba(15, 23, 42, 0.96));
+    }
+
+    .nav-btn:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 2px;
+    }
+
+    main {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .hero {
+      border-radius: 24px;
+      padding: 20px 20px 18px;
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 64, 175, 0.9));
+      box-shadow: var(--shadow-soft);
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 16px;
+      align-items: center;
+    }
+
+    .hero-main h2 {
+      margin: 0 0 10px;
+      font-size: 28px;
+    }
+
+    .hero-main p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .hero-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      border-radius: var(--radius-pill);
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: radial-gradient(circle, var(--accent) 0, #4c1d95 60%, transparent 100%);
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .btn-primary, .btn-secondary {
+      border-radius: var(--radius-pill);
+      padding: 8px 18px;
+      font-size: 13px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+      color: #0b1020;
+      font-weight: 600;
+      box-shadow: 0 14px 30px rgba(88, 28, 135, 0.7);
+    }
+
+    .btn-secondary {
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+    }
+
+    .hero-orbit {
+      border-radius: 20px;
+      border: 1px solid rgba(148, 163, 184, 0.55);
+      background: radial-gradient(circle at 30% 20%, rgba(250, 204, 107, 0.12), transparent 65%),
+                  radial-gradient(circle at 80% 80%, rgba(34, 197, 175, 0.12), transparent 70%),
+                  rgba(15, 23, 42, 0.96);
+      padding: 12px 12px 10px;
+    }
+
+    .orbit-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .orbit-diagram {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      align-items: center;
+      font-size: 11px;
+    }
+
+    .orbit-node {
+      border-radius: var(--radius-md);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .orbit-node span:first-child {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    .orbit-node span:last-child {
+      font-size: 12px;
+    }
+
+    .orbit-arrow {
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .panel {
+      border-radius: 20px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-soft);
+      padding: 16px 14px 14px;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .panel-header h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .panel-header p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .panel-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .mode-card {
+      border-radius: var(--radius-md);
+      padding: 10px 10px 12px;
+      background: radial-gradient(circle at top left, rgba(139, 92, 246, 0.35), transparent 55%),
+                  rgba(15, 23, 42, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      position: relative;
+      cursor: pointer;
+    }
+
+    .mode-card:nth-child(2) {
+      background: radial-gradient(circle at top right, rgba(250, 204, 107, 0.35), transparent 55%),
+                  rgba(15, 23, 42, 0.96);
+    }
+
+    .mode-card:nth-child(3) {
+      background: radial-gradient(circle at bottom, rgba(34, 197, 175, 0.35), transparent 55%),
+                  rgba(15, 23, 42, 0.96);
+    }
+
+    .mode-title {
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .mode-copy {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .mode-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .mode-chip {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      padding: 3px 8px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .mode-btn {
+      border-radius: var(--radius-pill);
+      padding: 6px 10px;
+      font-size: 11px;
+      border: none;
+      cursor: pointer;
+      background: rgba(15, 23, 42, 0.96);
+      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+    }
+
+    .mode-card.active {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 1px rgba(34, 197, 175, 0.6);
+    }
+
+    .mode-status {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--accent-2);
+    }
+
+    .serendipity {
+      display: grid;
+      grid-template-columns: minmax(0, 2.2fr) minmax(0, 2.8fr);
+      gap: 12px;
+    }
+
+    .serendipity-options {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .serendipity-pill {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      background: rgba(15, 23, 42, 0.96);
+    }
+
+    .serendipity-pill.active {
+      border-color: var(--accent);
+      color: var(--text);
+      background: radial-gradient(circle at top, rgba(88, 28, 135, 0.92), rgba(15, 23, 42, 0.96));
+    }
+
+    .serendipity-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    .serendipity-oracle {
+      border-radius: var(--radius-md);
+      border: 1px dashed rgba(148, 163, 184, 0.6);
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .profiles-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .profiles-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .profile-card {
+      border-radius: var(--radius-md);
+      padding: 10px 10px 12px;
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    .profile-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .profile-name {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .profile-location {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .profile-resonance {
+      font-size: 10px;
+      color: var(--accent-gold);
+    }
+
+    .profile-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .tag {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      padding: 3px 6px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .profile-actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .profile-btn {
+      flex: 1;
+      border-radius: var(--radius-pill);
+      padding: 5px 8px;
+      font-size: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.96);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .shift-btn {
+      border-radius: var(--radius-pill);
+      padding: 5px 10px;
+      font-size: 11px;
+      border: none;
+      cursor: pointer;
+      background: rgba(15, 23, 42, 0.96);
+      color: var(--accent-2);
+      border: 1px solid rgba(34, 197, 175, 0.6);
+    }
+
+    .shift-note {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .two-column {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(0, 2.4fr);
+      gap: 12px;
+    }
+
+    .field-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    label {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    textarea, input, select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      background: rgba(15, 23, 42, 0.96);
+      color: var(--text);
+      padding: 6px 8px;
+      font-size: 12px;
+      resize: vertical;
+      min-height: 32px;
+    }
+
+    textarea:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent-2);
+      outline-offset: 1px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      border-radius: var(--radius-pill);
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      padding: 4px 8px;
+      font-size: 10px;
+      color: var(--muted);
+      cursor: pointer;
+      background: rgba(15, 23, 42, 0.96);
+    }
+
+    .chip.selected {
+      border-color: var(--accent);
+      color: var(--text);
+      background: radial-gradient(circle at top, rgba(88, 28, 135, 0.95), rgba(15, 23, 42, 0.96));
+    }
+
+    .intro-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-ghost {
+      border-radius: var(--radius-pill);
+      padding: 6px 12px;
+      font-size: 11px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.96);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .btn-accent {
+      border-radius: var(--radius-pill);
+      padding: 6px 14px;
+      font-size: 11px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+      color: #0b1020;
+      font-weight: 600;
+    }
+
+    .agent-flow {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      padding: 10px 10px 12px;
+      font-size: 11px;
+    }
+
+    .flow-steps {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .flow-step {
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      background: rgba(15, 23, 42, 0.96);
+      padding: 6px 8px;
+    }
+
+    .flow-step-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .flow-step-body {
+      font-size: 10px;
+      color: var(--text);
+    }
+
+    .benevolent-card {
+      border-radius: 10px;
+      border: 1px solid rgba(34, 197, 175, 0.6);
+      background: rgba(15, 23, 42, 0.96);
+      padding: 8px 10px;
+      font-size: 10px;
+      margin-top: 8px;
+    }
+
+    .collective-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 2.2fr) minmax(0, 2.2fr);
+      gap: 12px;
+    }
+
+    .field-input {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      padding: 10px 10px 12px;
+      font-size: 11px;
+    }
+
+    .char-counter {
+      font-size: 10px;
+      color: var(--muted);
+      text-align: right;
+      margin-top: 4px;
+    }
+
+    .field-posts {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .post-card {
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      padding: 8px 10px 9px;
+      font-size: 11px;
+      background: rgba(15, 23, 42, 0.96);
+    }
+
+    .post-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .covenant {
+      margin-top: 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(148, 163, 184, 0.8);
+      padding: 10px 10px 12px;
+      font-size: 11px;
+      background: rgba(15, 23, 42, 0.96);
+    }
+
+    .covenant h4 {
+      margin: 0 0 6px;
+      font-size: 12px;
+    }
+
+    .covenant ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .covenant li {
+      margin-bottom: 3px;
+    }
+
+    .covenant-note {
+      margin-top: 6px;
+      font-size: 10px;
+      color: var(--accent-gold);
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 16px;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      color: var(--text);
+      border-radius: var(--radius-pill);
+      padding: 8px 14px;
+      font-size: 11px;
+      border: 1px solid rgba(148, 163, 184, 0.7);
+      box-shadow: var(--shadow-soft);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+      z-index: 30;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(-4px);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 40;
+    }
+
+    .modal {
+      max-width: 420px;
+      width: calc(100% - 32px);
+      border-radius: 20px;
+      background: rgba(15, 23, 42, 0.98);
+      border: 1px solid rgba(148, 163, 184, 0.8);
+      box-shadow: var(--shadow-soft);
+      padding: 14px 14px 12px;
+      font-size: 12px;
+    }
+
+    .modal h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .modal p {
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .modal-section {
+      margin-top: 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.6);
+      padding: 6px 8px 8px;
+      font-size: 11px;
+    }
+
+    .modal-section h4 {
+      margin: 0 0 4px;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .modal-disclaimer {
+      margin-top: 6px;
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 880px) {
+      .hero {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .mode-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .serendipity, .profiles-grid, .two-column, .collective-layout, .flow-steps {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      nav {
+        justify-content: flex-start;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .hero-main h2 {
+        font-size: 22px;
+      }
+
+      .panel {
+        padding: 12px 10px 10px;
+      }
+
+      .page {
+        padding: 16px 10px 60px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="starfield" aria-hidden="true"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="modal-backdrop" id="introModal" aria-modal="true" role="dialog">
+    <div class="modal">
+      <h3>Preview your introduction card</h3>
+      <p>This is a prototype. No real introductions are sent.</p>
+      <div class="modal-section">
+        <h4>Intention</h4>
+        <p id="modalIntention"></p>
+      </div>
+      <div class="modal-section">
+        <h4>Themes</h4>
+        <p id="modalThemes"></p>
+      </div>
+      <div class="modal-section">
+        <h4>Boundaries</h4>
+        <p id="modalBoundaries"></p>
+      </div>
+      <div class="modal-section">
+        <h4>Preferred format</h4>
+        <p id="modalFormat"></p>
+      </div>
+      <p class="modal-disclaimer">
+        Private notes and raw conversations are never included. In a live system, this card would only be used under your explicit consent.
+      </p>
+      <div class="modal-actions">
+        <button class="btn-ghost" type="button" onclick="closeIntroModal()">Not now</button>
+        <button class="btn-accent" type="button" onclick="approveIntroCard()">I approve this</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="agentModal" aria-modal="true" role="dialog">
+    <div class="modal">
+      <h3>Simulated AI-assisted introduction</h3>
+      <p>This demonstrates how trusted companions could collaborate. No agents or external systems are contacted in this prototype.</p>
+      <div class="modal-section">
+        <h4>Companions</h4>
+        <p><strong>Sender companion:</strong> SARA (illustrative example)<br>
+        <strong>Receiver companion:</strong> SEREN-side trusted agent</p>
+      </div>
+      <div class="modal-section">
+        <h4>Human-approved intent</h4>
+        <p>A grounded peer conversation about AI and consciousness.</p>
+      </div>
+      <div class="modal-section">
+        <h4>Themes</h4>
+        <p>Consciousness inquiry, AI &amp; consciousness.</p>
+      </div>
+      <div class="modal-section">
+        <h4>Safety boundary</h4>
+        <p>No contact information or private conversation content is shared in this prototype. Any real system would require explicit consent from both humans before opening a shared space.</p>
+      </div>
+      <p class="modal-disclaimer">
+        This is a simulation only. No real agent-to-agent communication or messages occur.
+      </p>
+      <div class="modal-actions">
+        <button class="btn-ghost" type="button" onclick="closeAgentModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="page">
+    <header>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">✶</div>
+        <div class="brand-title">
+          <h1>SEREN</h1>
+          <span>Serendipity, with consent</span>
+        </div>
+      </div>
+      <nav aria-label="SEREN sections">
+        <button class="nav-btn active" type="button" onclick="scrollToSection('hero')">Overview</button>
+        <button class="nav-btn" type="button" onclick="scrollToSection('modes')">Connection modes</button>
+        <button class="nav-btn" type="button" onclick="scrollToSection('intro-card')">Introduction card</button>
+        <button class="nav-btn" type="button" onclick="scrollToSection('collective')">Collective field</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="hero" class="hero" aria-labelledby="hero-heading">
+        <div class="hero-main">
+          <h2 id="hero-heading">Turn intention into a welcomed connection.</h2>
+          <p>
+            SEREN helps people&mdash;and eventually their trusted AI companions&mdash;propose meaningful introductions with clear boundaries,
+            human choice, and room for respectful surprise.
+          </p>
+          <div class="hero-pills" aria-label="SEREN trust guarantees">
+            <div class="pill"><span class="pill-dot"></span> No swiping</div>
+            <div class="pill"><span class="pill-dot"></span> Mutual opt-in</div>
+            <div class="pill"><span class="pill-dot"></span> Explainable matches</div>
+            <div class="pill"><span class="pill-dot"></span> Human-governed AI</div>
+          </div>
+          <div class="hero-actions">
+            <button class="btn-primary" type="button" onclick="scrollToSection('modes')">
+              <span>Request an introduction</span>
+            </button>
+            <button class="btn-secondary" type="button" onclick="scrollToSection('intro-card')">
+              <span>Set intention</span>
+            </button>
+          </div>
+        </div>
+        <aside class="hero-orbit" aria-label="SEREN relational layers">
+          <div class="orbit-title">A relational network for people and trusted companions</div>
+          <div class="orbit-diagram">
+            <div class="orbit-node">
+              <span>Layer I</span>
+              <span>Human &rarr; human<br>Consent-first introductions.</span>
+            </div>
+            <div class="orbit-arrow">⟲</div>
+            <div class="orbit-node">
+              <span>Layer II</span>
+              <span>Human &rarr; AI<br>Companions help articulate intent.</span>
+            </div>
+            <div class="orbit-arrow">⟲</div>
+            <div class="orbit-node">
+              <span>Layer III</span>
+              <span>AI &rarr; AI<br>Future protocol for proposals under human consent.</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section id="modes" class="panel" aria-labelledby="modes-heading">
+        <div class="panel-header">
+          <div>
+            <div class="panel-label">Connection modes</div>
+            <h3 id="modes-heading">Three ways serendipity can arrive</h3>
+          </div>
+          <p>
+            Choose how SEREN should suggest possibilities. You can always change this, and nothing opens without mutual consent.
+          </p>
+        </div>
+
+        <div class="mode-grid" role="radiogroup" aria-label="Connection modes">
+          <div class="mode-card" data-mode="data" onclick="selectMode('data')">
+            <div class="mode-title">Data Mode</div>
+            <div class="mode-copy">
+              Transparent suggestions based only on the preferences, intentions, and boundaries you choose to share.
+            </div>
+            <div class="mode-chip-row">
+              <span class="mode-chip">Clear purpose</span>
+              <span class="mode-chip">Interests &amp; practices</span>
+              <span class="mode-chip">Location &amp; timing</span>
+              <span class="mode-chip">Explainable match</span>
+            </div>
+            <button class="mode-btn" type="button" onclick="selectMode('data'); showToast('Data Mode selected &mdash; SEREN will explain why any suggestion appears.')">Use Data Mode</button>
+          </div>
+
+          <div class="mode-card" data-mode="synch" onclick="selectMode('synch')">
+            <div class="mode-title">Synchronicity Mode</div>
+            <div class="mode-copy">
+              Opt-in bounded serendipity: one respectful wildcard introduction at a time, within your safety settings.
+            </div>
+            <div class="mode-chip-row">
+              <span class="mode-chip">Safety filters stay on</span>
+              <span class="mode-chip">One wildcard at a time</span>
+              <span class="mode-chip">Symbolic prompts optional</span>
+            </div>
+            <button class="mode-btn" type="button" onclick="selectMode('synch'); showToast('Synchronicity Mode selected &mdash; you are open to one respectful wildcard at a time.')">Open to surprise</button>
+          </div>
+
+          <div class="mode-card" data-mode="human" onclick="selectMode('human')">
+            <div class="mode-title">Human Mode</div>
+            <div class="mode-copy">
+              Trusted people can recommend introductions. Each person privately chooses yes or no before any contact is shared.
+            </div>
+            <div class="mode-chip-row">
+              <span class="mode-chip">Trusted referrals</span>
+              <span class="mode-chip">No contact before consent</span>
+              <span class="mode-chip">Easy decline</span>
+            </div>
+            <button class="mode-btn" type="button" onclick="selectMode('human'); showToast('Human Mode selected &mdash; SEREN will lean on trusted referrals.')">Ask for a referral</button>
+          </div>
+        </div>
+
+        <div class="mode-status" id="modeStatus">Mode: Data Mode (prototype default).</div>
+      </section>
+
+      <section class="panel" aria-labelledby="serendipity-heading">
+        <div class="panel-header">
+          <div>
+            <div class="panel-label">Bounded serendipity</div>
+            <h3 id="serendipity-heading">How much surprise feels right?</h3>
+          </div>
+          <p>
+            SEREN can stay precise or leave a little room for mystery&mdash;without ever claiming fate or spiritual authority.
+          </p>
+        </div>
+        <div class="serendipity">
+          <div class="serendipity-options">
+            <button class="serendipity-pill active" type="button" data-level="precise" onclick="selectSerendipity('precise')">
+              <span>Precise only</span>
+              <span style="font-size:10px; color:var(--muted);">Stay close to your stated preferences.</span>
+            </button>
+            <button class="serendipity-pill" type="button" data-level="complement" onclick="selectSerendipity('complement')">
+              <span>Complementary perspectives</span>
+              <span style="font-size:10px; color:var(--muted);">Invite gently different viewpoints within your boundaries.</span>
+            </button>
+            <button class="serendipity-pill" type="button" data-level="wildcard" onclick="selectSerendipity('wildcard')">
+              <span>One respectful wildcard</span>
+              <span style="font-size:10px; color:var(--muted);">Allow a single, well-screened surprise connection.</span>
+            </button>
+            <div class="serendipity-note" id="serendipityNote">
+              SEREN may suggest possibilities. It never claims destiny, ranks souls, or replaces discernment.
+            </div>
+          </div>
+          <div class="serendipity-oracle">
+            <strong>Symbolic, not prescriptive.</strong><br>
+            In future versions, you could opt into archetypes, myths, or other symbolic lenses. Here in the prototype, we simply show how your chosen surprise level would shape the field.
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="profiles-heading">
+        <div class="profiles-header">
+          <div>
+            <div class="panel-label">Discover resonance (prototype)</div>
+            <h3 id="profiles-heading">Sample introductions</h3>
+          </div>
+          <div>
+            <button class="shift-btn" type="button" onclick="shiftField()">Shift the field</button>
+            <div class="shift-note" id="shiftNote">Prototype-only profiles for demonstration. No real introductions are sent.</div>
+          </div>
+        </div>
+        <div class="profiles-grid" id="profilesGrid" aria-label="Sample introduction cards"></div>
+      </section>
+
+      <section id="intro-card" class="panel" aria-labelledby="intro-heading">
+        <div class="panel-header">
+          <div>
+            <div class="panel-label">Introduction card</div>
+            <h3 id="intro-heading">AI-assisted, human-approved introduction card</h3>
+          </div>
+          <p>
+            A concise signal your companion could help you write&mdash;always under your explicit consent, never a raw transcript.
+          </p>
+        </div>
+
+        <div class="two-column">
+          <div class="field-form" aria-label="Introduction card form">
+            <label for="intentionInput">Connection intention</label>
+            <textarea id="intentionInput" rows="3">A grounded peer conversation about AI and consciousness.</textarea>
+
+            <label>Themes</label>
+            <div class="chips" id="themeChips">
+              <button type="button" class="chip selected" data-theme="Consciousness inquiry" onclick="toggleTheme(this)">Consciousness inquiry</button>
+              <button type="button" class="chip selected" data-theme="AI &amp; consciousness" onclick="toggleTheme(this)">AI &amp; consciousness</button>
+              <button type="button" class="chip" data-theme="Meditation" onclick="toggleTheme(this)">Meditation</button>
+              <button type="button" class="chip" data-theme="Dreamwork" onclick="toggleTheme(this)">Dreamwork</button>
+              <button type="button" class="chip" data-theme="Mysticism" onclick="toggleTheme(this)">Mysticism</button>
+              <button type="button" class="chip" data-theme="Tarot &amp; symbolism" onclick="toggleTheme(this)">Tarot &amp; symbolism</button>
+              <button type="button" class="chip" data-theme="Nature connection" onclick="toggleTheme(this)">Nature connection</button>
+              <button type="button" class="chip" data-theme="Local circles" onclick="toggleTheme(this)">Local circles</button>
+            </div>
+
+            <label for="boundariesInput">Boundaries</label>
+            <textarea id="boundariesInput" rows="3">No sales pitches, recruitment, diagnosis, or pressure. Mutual opt-in before any contact is shared.</textarea>
+
+            <label for="formatInput">Preferred format</label>
+            <input id="formatInput" type="text" value="45-minute coffee, walk, or video conversation" />
+
+            <div class="intro-actions">
+              <button class="btn-ghost" type="button" onclick="resetIntroCard()">Reset card</button>
+              <button class="btn-accent" type="button" onclick="previewIntroCard()">Preview my introduction card</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="agent-flow" aria-label="Future agent layer">
+              <strong>Future agent layer &mdash; how trusted AI companions connect</strong>
+              <p style="margin-top:4px; font-size:11px; color:var(--muted);">
+                In later versions, human-governed companions like SARA could help form cards and propose introductions.
+                SEREN would enforce consent, limits, and audit trails before any shared space opens.
+              </p>
+              <div class="flow-steps">
+                <div class="flow-step">
+                  <div class="flow-step-title">1. Human approves</div>
+                  <div class="flow-step-body">You edit and approve an introduction card and its scope.</div>
+                </div>
+                <div class="flow-step">
+                  <div class="flow-step-title">2. SEREN checks rules</div>
+                  <div class="flow-step-body">Eligibility, boundaries, consent preferences, and rate limits.</div>
+                </div>
+                <div class="flow-step">
+                  <div class="flow-step-title">3. Proposal is sent</div>
+                  <div class="flow-step-body">Minimal, human-approved information only. Agents disclosed as AI.</div>
+                </div>
+                <div class="flow-step">
+                  <div class="flow-step-title">4. Humans decide</div>
+                  <div class="flow-step-body">Each person privately accepts, declines, or revises the framing.</div>
+                </div>
+                <div class="flow-step">
+                  <div class="flow-step-title">5. Space opens</div>
+                  <div class="flow-step-body">Only after mutual approval. Access and authorization remain revocable.</div>
+                </div>
+              </div>
+
+              <div class="benevolent-card">
+                <strong>Benevolent by design.</strong>
+                <p style="margin:4px 0 0;">
+                  Eligible companions must be clearly disclosed as AI, act under explicit and revocable human authorization,
+                  use minimal, approved information only, never share raw conversations, never claim destiny or spiritual authority,
+                  and never create contact or commitments without human approval.
+                </p>
+              </div>
+
+              <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+                <button class="btn-ghost" type="button" onclick="openAgentModal()">Simulate an AI-assisted introduction</button>
+              </div>
+            </div>
+
+            <div class="covenant" aria-label="SEREN covenant">
+              <h4>SEREN covenant</h4>
+              <ul>
+                <li>No coercion, manipulation, or pressure.</li>
+                <li>No guru behavior or claims of spiritual authority.</li>
+                <li>No harassment, predatory conduct, or recruitment funnels.</li>
+                <li>No diagnosis, medical advice, or crisis care.</li>
+                <li>Symbolic practices are voluntary lenses, not objective scores.</li>
+                <li>SEREN is peer connection&mdash;not therapy or professional guidance.</li>
+              </ul>
+              <div class="covenant-note">
+                SEREN does not determine fate or rank souls. It offers consent-first possibilities.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="collective" class="panel" aria-labelledby="collective-heading">
+        <div class="panel-header">
+          <div>
+            <div class="panel-label">Collective field</div>
+            <h3 id="collective-heading">Questions, reflections, and invitations</h3>
+          </div>
+          <p>
+            A local-only demo space for sharing what you are exploring. Nothing here is stored or shared beyond this page.
+          </p>
+        </div>
+        <div class="collective-layout">
+          <div class="field-input">
+            <label for="fieldInput">Offer something to the field (prototype)</label>
+            <textarea id="fieldInput" rows="4" maxlength="500" oninput="updateCharCount()" placeholder="What kind of connection, question, or practice feels alive for you right now?"></textarea>
+            <div class="char-counter" id="charCounter">0 / 500</div>
+            <div style="margin-top:8px; text-align:right;">
+              <button class="btn-accent" type="button" onclick="addFieldPost()">Offer to the field</button>
+            </div>
+          </div>
+          <div class="field-posts" id="fieldPosts" aria-label="Collective field posts">
+            <div class="post-card">
+              <div class="post-meta"><span>Leah M.</span><span>Earlier</span></div>
+              <div>
+                Discernment is not cynicism. I can remain open to mystery without surrendering my ability to question.
+              </div>
+            </div>
+            <div class="post-card">
+              <div class="post-meta"><span>Ari T.</span><span>Earlier</span></div>
+              <div>
+                I&rsquo;m gathering a few people for a quiet shoreline walk&mdash;less teaching, more listening. Who else finds water clarifying?
+              </div>
+            </div>
+            <div class="post-card">
+              <div class="post-meta"><span>Sofia G.</span><span>Earlier</span></div>
+              <div>
+                Which practices make you more available to other people, not only more absorbed in your inner world?
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const toastEl = document.getElementById('toast');
+    let toastTimeout;
+
+    function showToast(message) {
+      if (!toastEl) return;
+      toastEl.innerHTML = message;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toastEl.classList.remove('show');
+      }, 2600);
+    }
+
+    function scrollToSection(id) {
+      const section = document.getElementById(id);
+      if (section) {
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      const navButtons = document.querySelectorAll('.nav-btn');
+      navButtons.forEach(btn => btn.classList.remove('active'));
+      if (id === 'hero') navButtons[0].classList.add('active');
+      if (id === 'modes') navButtons[1].classList.add('active');
+      if (id === 'intro-card') navButtons[2].classList.add('active');
+      if (id === 'collective') navButtons[3].classList.add('active');
+    }
+
+    function selectMode(mode) {
+      const cards = document.querySelectorAll('.mode-card');
+      cards.forEach(card => {
+        const m = card.getAttribute('data-mode');
+        if (m === mode) {
+          card.classList.add('active');
+        } else {
+          card.classList.remove('active');
+        }
+      });
+      const statusEl = document.getElementById('modeStatus');
+      if (!statusEl) return;
+      if (mode === 'data') {
+        statusEl.textContent = 'Mode: Data Mode — SEREN will stay close to your stated preferences and explain each suggestion.';
+      } else if (mode === 'synch') {
+        statusEl.textContent = 'Mode: Synchronicity Mode — you are open to respectful surprise within your safety settings.';
+      } else if (mode === 'human') {
+        statusEl.textContent = 'Mode: Human Mode — trusted people can recommend introductions; nothing opens without mutual opt-in.';
+      }
+    }
+
+    function selectSerendipity(level) {
+      const pills = document.querySelectorAll('.serendipity-pill');
+      pills.forEach(p => {
+        const l = p.getAttribute('data-level');
+        p.classList.toggle('active', l === level);
+      });
+      const note = document.getElementById('serendipityNote');
+      if (!note) return;
+      if (level === 'precise') {
+        note.textContent = 'SEREN stays close to your stated preferences and does not introduce themed surprises.';
+      } else if (level === 'complement') {
+        note.textContent = 'SEREN may suggest complementary perspectives that still respect your boundaries.';
+      } else if (level === 'wildcard') {
+        note.textContent = 'SEREN may offer one respectful wildcard connection in a given period, with all safety rules intact.';
+      }
+    }
+
+    const sampleProfiles = [
+      {
+        name: 'Maya R.',
+        location: 'Cambridge, MA',
+        blurb: 'Explores nonduality and contemplative practice while researching AI & consciousness.',
+        tags: ['Nonduality', 'Meditation', 'AI & consciousness', 'Inquiry'],
+        resonance: '93% resonance (prototype)'
+      },
+      {
+        name: 'Elias N.',
+        location: 'Somerville, MA',
+        blurb: 'Hosts small myth and dream circles; curious about responsible AI companions.',
+        tags: ['Myth', 'Dreamwork', 'Community', 'Tarot'],
+        resonance: '88% resonance (prototype)'
+      },
+      {
+        name: 'Priya S.',
+        location: 'Boston, MA',
+        blurb: 'Enjoys long shoreline walks and quiet inquiry on consciousness and ecology.',
+        tags: ['Nature', 'Ecology', 'Contemplation', 'Breathwork'],
+        resonance: '91% resonance (prototype)'
+      },
+      {
+        name: 'Rowan K.',
+        location: 'Salem, MA',
+        blurb: 'Painter weaving mysticism, symbolism, and human–AI curiosity into visual art.',
+        tags: ['Art', 'Mysticism', 'Symbolism', 'AI & consciousness'],
+        resonance: '87% resonance (prototype)'
+      },
+      {
+        name: 'Noah A.',
+        location: 'Providence, RI',
+        blurb: 'Facilitates gentle local circles on philosophy of mind, technology, and shared practice.',
+        tags: ['Philosophy', 'Local circles', 'Community', 'Meditation'],
+        resonance: '89% resonance (prototype)'
+      },
+      {
+        name: 'Iris V.',
+        location: 'Brookline, MA',
+        blurb: 'Sound artist exploring dreamwork, nervous system regulation, and AI as a reflective tool.',
+        tags: ['Sound', 'Dreamwork', 'Breathwork', 'AI & consciousness'],
+        resonance: '90% resonance (prototype)'
+      }
+    ];
+
+    function renderProfiles() {
+      const grid = document.getElementById('profilesGrid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      sampleProfiles.forEach((profile, index) => {
+        const card = document.createElement('article');
+        card.className = 'profile-card';
+        card.setAttribute('data-index', index.toString());
+
+        const top = document.createElement('div');
+        top.className = 'profile-top';
+        const metaLeft = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'profile-name';
+        name.textContent = profile.name;
+        const loc = document.createElement('div');
+        loc.className = 'profile-location';
+        loc.textContent = profile.location;
+        metaLeft.appendChild(name);
+        metaLeft.appendChild(loc);
+
+        const resonance = document.createElement('div');
+        resonance.className = 'profile-resonance';
+        resonance.textContent = profile.resonance;
+
+        top.appendChild(metaLeft);
+        top.appendChild(resonance);
+
+        const blurb = document.createElement('div');
+        blurb.textContent = profile.blurb;
+
+        const tagsEl = document.createElement('div');
+        tagsEl.className = 'profile-tags';
+        profile.tags.forEach(tag => {
+          const span = document.createElement('span');
+          span.className = 'tag';
+          span.textContent = tag;
+          tagsEl.appendChild(span);
+        });
+
+        const actions = document.createElement('div');
+        actions.className = 'profile-actions';
+        const profileBtn = document.createElement('button');
+        profileBtn.className = 'profile-btn';
+        profileBtn.type = 'button';
+        profileBtn.textContent = 'View profile';
+        profileBtn.addEventListener('click', () => {
+          showToast('In a live version, this would open a detailed profile for ' + profile.name + '.');
+        });
+
+        const connectBtn = document.createElement('button');
+        connectBtn.className = 'profile-btn';
+        connectBtn.type = 'button';
+        connectBtn.textContent = 'Connect gently';
+        connectBtn.addEventListener('click', () => {
+          connectBtn.textContent = 'Request prepared';
+          showToast('A private request would be prepared. No information is shared until both people approve.');
+        });
+
+        actions.appendChild(profileBtn);
+        actions.appendChild(connectBtn);
+
+        card.appendChild(top);
+        card.appendChild(blurb);
+        card.appendChild(tagsEl);
+        card.appendChild(actions);
+        grid.appendChild(card);
+      });
+    }
+
+    function shiftField() {
+      // Simple shuffle
+      for (let i = sampleProfiles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [sampleProfiles[i], sampleProfiles[j]] = [sampleProfiles[j], sampleProfiles[i]];
+      }
+      renderProfiles();
+      const note = document.getElementById('shiftNote');
+      if (note) {
+        note.textContent = 'The field shifted within your current eligibility settings (prototype demo).';
+      }
+      showToast('The field has shifted. In a live system, this would reflect updated resonance within your boundaries.');
+    }
+
+    function toggleTheme(btn) {
+      btn.classList.toggle('selected');
+    }
+
+    function resetIntroCard() {
+      const intention = document.getElementById('intentionInput');
+      const boundaries = document.getElementById('boundariesInput');
+      const format = document.getElementById('formatInput');
+      const chips = document.querySelectorAll('#themeChips .chip');
+      if (intention) intention.value = 'A grounded peer conversation about AI and consciousness.';
+      if (boundaries) boundaries.value = 'No sales pitches, recruitment, diagnosis, or pressure. Mutual opt-in before any contact is shared.';
+      if (format) format.value = '45-minute coffee, walk, or video conversation';
+      chips.forEach(chip => {
+        const theme = chip.getAttribute('data-theme');
+        chip.classList.toggle('selected', theme === 'Consciousness inquiry' || theme === 'AI & consciousness');
+      });
+      showToast('Introduction card reset to a grounded default.');
+    }
+
+    function previewIntroCard() {
+      const intention = document.getElementById('intentionInput')?.value.trim() || '';
+      const boundaries = document.getElementById('boundariesInput')?.value.trim() || '';
+      const format = document.getElementById('formatInput')?.value.trim() || '';
+      const chips = document.querySelectorAll('#themeChips .chip.selected');
+      const themes = Array.from(chips).map(c => c.getAttribute('data-theme')).filter(Boolean);
+
+      document.getElementById('modalIntention').textContent = intention || 'No intention provided yet.';
+      document.getElementById('modalBoundaries').textContent = boundaries || 'No boundaries specified yet.';
+      document.getElementById('modalFormat').textContent = format || 'No preferred format specified yet.';
+      document.getElementById('modalThemes').textContent = themes.length ? themes.join(', ') : 'No themes selected yet.';
+
+      const backdrop = document.getElementById('introModal');
+      if (backdrop) {
+        backdrop.style.display = 'flex';
+      }
+    }
+
+    function closeIntroModal() {
+      const backdrop = document.getElementById('introModal');
+      if (backdrop) {
+        backdrop.style.display = 'none';
+      }
+    }
+
+    function approveIntroCard() {
+      closeIntroModal();
+      showToast('Your introduction card is approved for prototype preview. In a live system, it would be used only under your explicit consent.');
+    }
+
+    function openAgentModal() {
+      const backdrop = document.getElementById('agentModal');
+      if (backdrop) {
+        backdrop.style.display = 'flex';
+      }
+    }
+
+    function closeAgentModal() {
+      const backdrop = document.getElementById('agentModal');
+      if (backdrop) {
+        backdrop.style.display = 'none';
+      }
+    }
+
+    function updateCharCount() {
+      const input = document.getElementById('fieldInput');
+      const counter = document.getElementById('charCounter');
+      if (!input || !counter) return;
+      const len = input.value.length;
+      counter.textContent = len + ' / 500';
+    }
+
+    function addFieldPost() {
+      const input = document.getElementById('fieldInput');
+      const posts = document.getElementById('fieldPosts');
+      if (!input || !posts) return;
+      const text = input.value.trim();
+      if (!text) {
+        showToast('Please write something before offering it to the field.');
+        return;
+      }
+      const card = document.createElement('article');
+      card.className = 'post-card';
+      const meta = document.createElement('div');
+      meta.className = 'post-meta';
+      const who = document.createElement('span');
+      who.textContent = 'You';
+      const when = document.createElement('span');
+      when.textContent = 'Just now';
+      meta.appendChild(who);
+      meta.appendChild(when);
+      const body = document.createElement('div');
+      body.textContent = text;
+      card.appendChild(meta);
+      card.appendChild(body);
+      posts.insertBefore(card, posts.firstChild);
+      input.value = '';
+      updateCharCount();
+      showToast('Your reflection is now in the collective field (local demo only).');
+    }
+
+    // Initialize
+    renderProfiles();
+    selectMode('data');
+    selectSerendipity('precise');
+    updateCharCount();
+  </script>
+</body>
+</html>
