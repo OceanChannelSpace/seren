@@ -903,28 +903,51 @@ function guideSessionView(session, profile) {
   };
 }
 
-function guideProposals(profile, session) {
-  const parsed = { ...session.parsed, requestText: session.requestText };
+/** Shared proposal deps: candidate pool, gates, and privacy-safe views. */
+function proposalDeps(profile) {
   const passed = getPassedIds(profile.id);
   const blockedIds = new Set(
     db.prepare('SELECT blocked_id AS id FROM blocks WHERE blocker_id = ? UNION SELECT blocker_id AS id FROM blocks WHERE blocked_id = ?')
       .all(profile.id, profile.id).map((r) => r.id),
   );
-  const myBrief = getBriefByProfile(profile.id);
-  return buildProposals(profile, parsed, session.answers, {
+  return {
     candidates: listCandidateProfiles(),
     blockedIds,
     passedIds: new Set(passed),
     existingPairKeys: getNonWithdrawnPairKeys(),
     visibleProfile: (id, viewerId) => getVisibleProfile(id, viewerId),
-    // Bilateral reasons: the requester's stated offer grounds the
-    // candidate-side reason; candidate shared text comes only from their
-    // active, share-approved brief.
-    requesterOffer: (myBrief && myBrief.offer_text) || session.answers.offer || '',
+    // Bilateral reasons: candidate shared text comes only from their
+    // active, share-approved brief — never private notes, never drafts.
     getCandidateSharedText: (candidateId) => {
       const b = getBriefByProfile(candidateId);
       return (b && b.status === 'active' && b.consent_share) ? b.shared_text : '';
     },
+  };
+}
+
+function guideProposals(profile, session) {
+  const parsed = { ...session.parsed, requestText: session.requestText };
+  const myBrief = getBriefByProfile(profile.id);
+  return buildProposals(profile, parsed, session.answers, {
+    ...proposalDeps(profile),
+    // The requester's stated offer grounds the candidate-side reason.
+    requesterOffer: (myBrief && myBrief.offer_text) || session.answers.offer || '',
+  });
+}
+
+/**
+ * Proposals for an approved brief, regenerated on demand from the brief's
+ * own words — no guide session needed, so the brief review screen can
+ * restore suggestions after a reload. The engine is deterministic, so
+ * results are stable across loads.
+ */
+function briefProposals(profile, brief) {
+  const parsed = parseIntent(
+    [brief.intention_text, brief.good_fit_text].filter(Boolean).join('\n'),
+  );
+  return buildProposals(profile, parsed, {}, {
+    ...proposalDeps(profile),
+    requesterOffer: brief.offer_text || '',
   });
 }
 
@@ -1118,6 +1141,23 @@ app.get('/api/guide/proposals', (req, res) => {
       'An active connection brief with saved consent is required to see proposals.');
   }
   res.json({ proposals: guideProposals(profile, session) });
+});
+
+/**
+ * Proposals for an approved connection brief. Gated: the brief must belong
+ * to the requester, be ACTIVE, and hold consent_save. Regenerated from the
+ * brief's own words on every call — no guide session required, so the
+ * brief review screen restores suggestions after a reload.
+ */
+app.get('/api/briefs/:id/proposals', (req, res) => {
+  const found = requireBrief(req, res);
+  if (!found) return;
+  const { profile, brief } = found;
+  if (brief.status !== 'active' || !brief.consent_save) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'An active connection brief with saved consent is required to see proposals.');
+  }
+  res.json({ proposals: briefProposals(profile, brief) });
 });
 
 // ---------- static frontend ----------

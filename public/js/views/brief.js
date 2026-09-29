@@ -4,11 +4,11 @@
 // except the approved shared_text — never private_notes, never drafts.
 
 import * as api from '../api.js';
-import { get, set } from '../state.js';
+import { set } from '../state.js';
 import { proposalCard } from './home.js';
 import {
   esc, el, pageShell, errorBanner, infoBanner, loading, emptyState, card,
-  field, textArea, toast, announce, confirmDialog, friendlyError,
+  field, textArea, toast, announce, pluralize, confirmDialog, friendlyError,
 } from '../ui.js';
 import { navigate } from '../router.js';
 
@@ -66,12 +66,25 @@ export async function renderBrief(root, ctx) {
   }
 
   const intro = el(`<div></div>`);
-  intro.appendChild(el(`<p class="kicker">Review before it goes anywhere</p>`));
-  intro.appendChild(el(`<p class="about-text">Here is what SEREN understood from your conversation. Edit anything — wording, emphasis, tone — until it sounds like you. <strong>Nothing here is shared with anyone until you approve it.</strong></p>`));
-  const headRow = el(`<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0"></div>`);
-  headRow.appendChild(briefPill(brief.status));
-  intro.appendChild(headRow);
   shell.body.appendChild(intro);
+
+  /**
+   * Re-paint the intro header from current brief state — called on first
+   * render and immediately after approval, so the badge flips to Active
+   * and the privacy line updates without a page reload.
+   */
+  function paintIntro() {
+    intro.innerHTML = '';
+    const approved = brief.status === 'active';
+    intro.appendChild(el(`<p class="kicker">${approved ? 'Approved — SEREN may look for matches' : 'Review before it goes anywhere'}</p>`));
+    intro.appendChild(el(`<p class="about-text">${approved
+      ? 'Here is what SEREN understood from your conversation. You can still edit and save — the brief stays active. <strong>Only your exact approved text is ever shown to another person.</strong>'
+      : 'Here is what SEREN understood from your conversation. Edit anything — wording, emphasis, tone — until it sounds like you. <strong>Nothing here is shared with anyone until you approve it.</strong>'}</p>`));
+    const headRow = el(`<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0 0"></div>`);
+    headRow.appendChild(briefPill(brief.status));
+    intro.appendChild(headRow);
+  }
+  paintIntro();
 
   // --- paused notice ---
   if (brief.status === 'paused') {
@@ -217,6 +230,7 @@ export async function renderBrief(root, ctx) {
         consent_share: shareChk.checked,
       })).brief;
       set({ brief });
+      paintIntro();
       toast('Brief approved. Looking for gentle fits…');
       announce('Brief approved. Loading suggestions.');
       await loadProposals();
@@ -279,21 +293,15 @@ export async function renderBrief(root, ctx) {
     }
   }
 
+  /**
+   * Load suggestions for the brief itself — regenerated from the brief's
+   * own words, no guide session needed, so they survive a reload.
+   */
   async function loadProposals() {
     propSlot.innerHTML = '';
-    const sessionId = get('guideSessionId');
-    if (!sessionId) {
-      propSlot.appendChild(emptyState({
-        title: 'Your brief is saved.',
-        body: 'To see suggestions for this brief, start a guided conversation — SEREN looks for fits from what you share there.',
-        actionLabel: 'Start a guided conversation',
-        actionHref: '#/',
-      }));
-      return;
-    }
     propSlot.appendChild(loading('Looking thoughtfully…'));
     try {
-      const { proposals } = await api.getProposals(sessionId);
+      const { proposals } = await api.getBriefProposals(brief.id);
       propSlot.innerHTML = '';
       const head = card();
       head.appendChild(el(`<p class="kicker">Thoughtful introductions</p>`));
@@ -312,7 +320,7 @@ export async function renderBrief(root, ctx) {
       }
       for (const p of list) propSlot.appendChild(proposalCard(p, brief.id));
       propSlot.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      announce(list.length ? `${list.length} introduction suggestions.` : 'No suggestions this time.');
+      announce(list.length ? `${pluralize(list.length, 'introduction suggestion')}.` : 'No suggestions this time.');
     } catch (e) {
       propSlot.innerHTML = '';
       if (e.status === 403) {
@@ -325,6 +333,11 @@ export async function renderBrief(root, ctx) {
         notice.show(friendlyError(e));
       }
     }
+  }
+
+  // An approved brief restores its suggestions on load — no guide session needed.
+  if (brief.status === 'active') {
+    loadProposals();
   }
 
   announce('Review your connection brief.');

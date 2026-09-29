@@ -29,6 +29,20 @@ function asArray(v) {
   return Array.isArray(v) ? v : [];
 }
 
+/**
+ * Natural-language list with quoted items: “a”, “a” and “b”,
+ * “a”, “b”, and “c”. Quoting keeps raw keyword tokens readable
+ * instead of dumping them bare into a sentence.
+ * @param {string[]} words
+ * @returns {string}
+ */
+function quotedList(words) {
+  const qs = (words || []).map((w) => `“${w}”`);
+  if (qs.length <= 1) return qs.join('');
+  if (qs.length === 2) return `${qs[0]} and ${qs[1]}`;
+  return `${qs.slice(0, -1).join(', ')}, and ${qs[qs.length - 1]}`;
+}
+
 function intersect(a, b) {
   const setB = new Set(b);
   return a.filter((x) => setB.has(x));
@@ -112,7 +126,7 @@ export function scoreCandidate(requester, candidate, intentionText = '') {
   const sharedKeywords = [...reqTokens].filter((t) => candTokens.has(t)).slice(0, 6);
   if (sharedKeywords.length > 0) {
     score += 1 * sharedKeywords.length;
-    reasons.push(`Your intentions both speak of ${sharedKeywords.slice(0, 3).join(', ')}.`);
+    reasons.push(`You both mention ${quotedList(sharedKeywords.slice(0, 3))} in your intentions.`);
   }
 
   const reqFormats = asArray(requester.prefs?.formats);
@@ -230,7 +244,12 @@ export const PAIR_REASON_FALLBACK =
 
 function truncateText(text, max = 90) {
   const t = typeof text === 'string' ? text.trim() : '';
-  return t.length > max ? t.slice(0, max).trimEnd() + '…' : t;
+  if (t.length <= max) return t;
+  // Break on a word boundary so we never leave a dangling fragment ("Happ…").
+  const cut = t.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  const base = lastSpace > Math.floor(max / 2) ? cut.slice(0, lastSpace) : cut;
+  return base.trimEnd() + '…';
 }
 
 /**
@@ -265,10 +284,10 @@ export function buildPairReasons(requester, candidate, scored, requesterOffer = 
   let forCandidate = PAIR_REASON_FALLBACK;
   if (shared.length > 0) {
     const offerBit = String(requesterOffer || '').trim()
-      ? ` — your offer of “${truncateText(requesterOffer, 90)}” speaks to that ground`
+      ? ` — what you offer (“${truncateText(requesterOffer, 90)}”) speaks to that ground`
       : '';
     forCandidate =
-      `They've mentioned ${shared.join(', ')} in what they're looking for${offerBit}.`;
+      `They've mentioned ${quotedList(shared)} in what they're looking for${offerBit}.`;
   }
   return { forRequester, forCandidate };
 }

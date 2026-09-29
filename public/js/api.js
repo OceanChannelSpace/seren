@@ -143,6 +143,9 @@ export const withdrawBrief = (id) =>
   request('POST', `/api/briefs/${id}/withdraw`, { profileId: get('profileId') });
 export const getProposals = (sessionId) =>
   request('GET', `/api/guide/proposals${profileQuery(null, { sessionId })}`);
+/** Proposals for an approved brief, regenerated from the brief itself — no session needed. */
+export const getBriefProposals = (id) =>
+  request('GET', `/api/briefs/${id}/proposals${profileQuery()}`);
 
 /** Friendly one-line summary for an ApiError, for banners/toasts. */
 export function friendlyError(e) {

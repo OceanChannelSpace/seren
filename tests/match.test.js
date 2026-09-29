@@ -243,3 +243,38 @@ test('buildPairReasons: honest fallback when no concrete link can be derived', a
   assert.equal(forCandidate, PAIR_REASON_FALLBACK);
   assert.ok(!/definitely|perfect|soulmate|meant to/i.test(forCandidate));
 });
+
+// ---------- proposal copy quality (visual QA regressions, 2026-09-29) ----------
+
+test('scoreCandidate: shared-keyword reason reads naturally with quoted words', async () => {
+  const { scoreCandidate } = await import('../src/match.js');
+  const requester = profile(1, { intention: 'I am open to a gentle practice and shared meditation with someone kind.' });
+  const candidate = profile(2, { intention: 'I practice meditation and enjoy open conversation about practice.' });
+  const { reasons } = scoreCandidate(requester, candidate, requester.intention);
+  const kw = reasons.find((r) => r.includes('intentions'));
+  assert.ok(kw, `expected a keyword reason, got: ${JSON.stringify(reasons)}`);
+  assert.ok(!/speak of/i.test(kw), `no keyword-dump phrasing: ${kw}`);
+  assert.ok(/“[^”]+”/.test(kw), `shared words are quoted: ${kw}`);
+  assert.ok(/ and /.test(kw) || (kw.match(/“/g) || []).length <= 2, `natural list joining: ${kw}`);
+});
+
+test('buildPairReasons: forCandidate avoids nested offer phrasing and mid-word truncation', async () => {
+  const { buildPairReasons } = await import('../src/match.js');
+  const requester = profile(1, {
+    intention: 'I want to support someone moving through grief with steady presence.',
+  });
+  const candidate = profile(2, {
+    intention: 'I am moving through grief and looking for gentle company.',
+    practices: ['meditation'],
+  });
+  const longOffer = 'I can offer a calm, grounding presence and weekly happiness practices for anyone walking beside me on this path forward together';
+  assert.ok(longOffer.length > 90, 'fixture offer must exceed the truncation limit');
+  const { forCandidate } = buildPairReasons(requester, candidate, { reasons: [] }, longOffer);
+  assert.ok(!/your offer of “/i.test(forCandidate), `no redundant offer nesting: ${forCandidate}`);
+  assert.ok(forCandidate.includes('…'), `long offer is truncated: ${forCandidate}`);
+  const beforeEllipsis = forCandidate.split('…')[0];
+  assert.ok(!/[a-z]…?$/.test(beforeEllipsis.slice(-12)) || /\s$/.test(beforeEllipsis) || /[a-z]{4,}$/.test(beforeEllipsis),
+    `truncation lands on a word boundary: ${forCandidate}`);
+  // The shared word is quoted, not dumped bare.
+  assert.ok(/“grief”/.test(forCandidate), `shared word quoted: ${forCandidate}`);
+});

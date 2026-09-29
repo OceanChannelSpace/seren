@@ -53,6 +53,11 @@ export function announce(msg) {
   if (region) region.textContent = msg;
 }
 
+/** "1 introduction suggestion" / "3 introduction suggestions". */
+export function pluralize(count, singular, plural = `${singular}s`) {
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+}
+
 export function toast(msg, kind = 'info') {
   const region = document.getElementById('toast-region');
   if (!region) { announce(msg); return; }

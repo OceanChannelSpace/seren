@@ -8,7 +8,7 @@ import { navigate } from '../router.js';
 import { renderWelcome } from './welcome.js';
 import {
   esc, el, pageShell, errorBanner, toast, loading, emptyState, card,
-  field, textArea, chipGroup, chipSingle, announce,
+  field, textArea, chipGroup, chipSingle, announce, pluralize,
 } from '../ui.js';
 
 /** Thin local fetch wrapper mirroring api.js semantics (guide endpoints are new). */
@@ -263,7 +263,7 @@ export async function renderHome(root, ctx) {
       pane.appendChild(proposalCard(p));
     }
     pane.appendChild(secondaryLinks());
-    announce(list.length ? `${list.length} introduction suggestions.` : 'No suggestions this time.');
+    announce(list.length ? `${pluralize(list.length, 'introduction suggestion')}.` : 'No suggestions this time.');
   }
 
 

@@ -437,3 +437,71 @@ test('respond accepted_with_boundary also posts the warm-intro message', async (
   assert.equal(thread.json.messages[0].senderId, 0);
   assert.ok(thread.json.messages[0].body.includes('Steady Sue seeks a dreamwork peer.'));
 });
+
+// ---------- GET /api/briefs/:id/proposals (session-free, survives reload) ----------
+
+test('GET /api/briefs/:id/proposals: 403 for a draft brief', async () => {
+  const me = await createProfile({ name: 'Drafty Proposer' });
+  const sid = await completeSession(me.id);
+  const created = await api('POST', '/api/briefs', { profileId: me.id, sessionId: sid });
+  const id = created.json.brief.id;
+  const gated = await api('GET', `/api/briefs/${id}/proposals?profileId=${me.id}`);
+  assert.equal(gated.status, 403);
+  assert.equal(gated.json.error.code, 'consent_required');
+});
+
+test('GET /api/briefs/:id/proposals: active brief regenerates proposals without a session', async () => {
+  const me = await createProfile({
+    name: 'Reload Rita',
+    interests: ['astrology'],
+    intention: 'I want to discuss astrology and birth charts with a thoughtful peer.',
+    practices: ['astrology'],
+    intentions: ['astrology-discussion'],
+  });
+  const cand = await createProfile({
+    name: 'Steady Sam',
+    interests: ['astrology'],
+    intention: 'I love discussing astrology and birth charts with thoughtful peers.',
+    practices: ['astrology'],
+    intentions: ['astrology-discussion'],
+  });
+  await makeActiveBrief(cand.id, {
+    shared_text: 'Steady Sam is hoping to find an astrology peer for chart-rich conversation.',
+  });
+  const brief = await makeActiveBrief(me.id, {
+    shared_text: 'Reload Rita is hoping to find an astrology peer.',
+  });
+
+  // No guide session involved — this is the post-reload path.
+  const first = await api('GET', `/api/briefs/${brief.id}/proposals?profileId=${me.id}`);
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  assert.ok(Array.isArray(first.json.proposals));
+  const p = first.json.proposals.find((x) => x.candidate.id === cand.id);
+  assert.ok(p, 'candidate should be proposed from the brief alone');
+  assert.ok(p.whyItFits.length > 0);
+  assert.ok(typeof p.forCandidate === 'string' && p.forCandidate.length > 0);
+  assert.ok(!('email' in p.candidate), 'candidate email must not leak');
+  assert.ok(!('private_notes' in p.candidate), 'private notes must not leak');
+
+  // Regeneration is deterministic — a second load returns the same candidates.
+  const second = await api('GET', `/api/briefs/${brief.id}/proposals?profileId=${me.id}`);
+  assert.deepEqual(
+    second.json.proposals.map((x) => x.candidate.id),
+    first.json.proposals.map((x) => x.candidate.id),
+  );
+
+  // Pausing the brief re-locks the endpoint.
+  await api('POST', `/api/briefs/${brief.id}/pause`, { profileId: me.id });
+  const relocked = await api('GET', `/api/briefs/${brief.id}/proposals?profileId=${me.id}`);
+  assert.equal(relocked.status, 403);
+});
+
+test('GET /api/briefs/:id/proposals: 403 for another profile\u2019s brief, 404 for missing', async () => {
+  const me = await createProfile({ name: 'Owner Olga' });
+  const other = await createProfile({ name: 'Stranger Sven' });
+  const brief = await makeActiveBrief(me.id);
+  const foreign = await api('GET', `/api/briefs/${brief.id}/proposals?profileId=${other.id}`);
+  assert.equal(foreign.status, 403);
+  const missing = await api('GET', `/api/briefs/999999/proposals?profileId=${me.id}`);
+  assert.equal(missing.status, 404);
+});
