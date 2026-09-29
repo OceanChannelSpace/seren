@@ -1,4 +1,4 @@
-// SEREN onboarding — conversational 7-screen flow, one focused question at a time.
+// SEREN onboarding — 7-screen flow, one focused question at a time.
 // Backend requirements on create (src/validate.js): name, email, interests[]
 // (legacy 1–8, required), intention free text (10–500), connectionPrefs.seeking
 // (from SEEKING), consents with introductions=true. Richer fields ride along.
@@ -109,7 +109,7 @@ export async function renderOnboarding(root, ctx) {
     return;
   }
 
-  const shell = pageShell('Create your profile', 'A short conversation · about three minutes');
+  const shell = pageShell('Create your profile', 'A few gentle steps · about three minutes');
   shell.root.classList.add('page-narrow');
   const banner = errorBanner();
   shell.body.appendChild(banner.node);

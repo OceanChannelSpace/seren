@@ -93,14 +93,18 @@ async function makeActiveBrief(profileId, overrides = {}) {
   return approved.json.brief;
 }
 
-// ---------- migration v3 ----------
+// ---------- migration v4 ----------
 
-test('migration v3: briefs table, shared-text column, user_version, sentinel', () => {
+test('migration v4: briefs table, shared-text column, chat_sessions, user_version, sentinel', () => {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  assert.equal(version, 3);
+  assert.equal(version, 4);
   const briefCols = db.prepare('PRAGMA table_info(briefs)').all().map((r) => r.name);
   for (const c of ['id', 'profile_id', 'who_text', 'shared_text', 'consent_save', 'consent_share', 'status']) {
     assert.ok(briefCols.includes(c), `briefs missing column ${c}`);
+  }
+  const chatCols = db.prepare('PRAGMA table_info(chat_sessions)').all().map((r) => r.name);
+  for (const c of ['id', 'profile_id', 'stage', 'transcript_json']) {
+    assert.ok(chatCols.includes(c), `chat_sessions missing column ${c}`);
   }
   const introCols = db.prepare('PRAGMA table_info(introductions)').all().map((r) => r.name);
   assert.ok(introCols.includes('requester_shared_text'));

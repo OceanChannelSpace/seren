@@ -1,9 +1,9 @@
 // SEREN welcome view — beta invite gate + landing.
 // The beta gate lives here (not the router) so the invite is a full page.
 
-import { get, set } from '../state.js';
-import { betaEnter, fetchMeta, friendlyError } from '../api.js';
-import { el, esc, card, errorBanner, wireSubmit, textInput, field, announce } from '../ui.js';
+import { get, set, setProfileId } from '../state.js';
+import { betaEnter, fetchMeta, friendlyError, relink, getProfile } from '../api.js';
+import { el, esc, card, errorBanner, wireSubmit, textInput, field, announce, toast } from '../ui.js';
 import { navigate } from '../router.js';
 
 export async function renderWelcome(root, ctx) {
@@ -126,11 +126,62 @@ function renderLanding() {
   wrap.appendChild(principles);
 
   if (!profileId) {
-    const cta = el(`<div class="center" style="margin-top:2rem">
-      <a class="btn btn-primary" href="#/onboarding" style="font-size:1.05rem;padding:0.9rem 2.4rem">Begin gently</a>
-      <p class="footer-note" style="margin-top:1rem">Takes about five unhurried minutes. You can pause anytime.</p>
-    </div>`);
-    wrap.appendChild(cta);
+    const newCard = card([
+      el(`<h2>New to SEREN</h2>`),
+      el(`<p class="lede" style="font-size:1rem">Create your profile in a few gentle steps — about three minutes. You can pause anytime.</p>`),
+      el(`<div class="btn-row"><a class="btn btn-primary" href="#/onboarding">Begin gently</a></div>`),
+    ]);
+    newCard.classList.add('welcome-back');
+    wrap.appendChild(newCard);
+
+    const back = card([]);
+    back.classList.add('welcome-back');
+    back.appendChild(el(`<h2>Welcome back</h2>`));
+    back.appendChild(el(`<p class="lede" style="font-size:1rem">Used SEREN on another device? Enter your email and display name to reconnect this device to your profile.</p>`));
+    const banner = errorBanner();
+    back.appendChild(banner.node);
+    const form = el(`<form novalidate></form>`);
+    const emailInput = textInput({
+      id: 'relink-email', type: 'email', placeholder: 'you@example.com',
+      autocomplete: 'email', required: true,
+    });
+    const nameInput = textInput({
+      id: 'relink-name', placeholder: 'Your display name',
+      autocomplete: 'name', required: true,
+    });
+    form.appendChild(field('Email', emailInput, { id: 'relink-email' }));
+    form.appendChild(field('Display name', nameInput, { id: 'relink-name' }));
+    const submit = el(`<button type="submit" class="btn btn-secondary">Reconnect this device</button>`);
+    form.appendChild(submit);
+    wireSubmit(form, submit, async () => {
+      banner.clear();
+      const email = emailInput.value.trim();
+      const name = nameInput.value.trim();
+      if (!email || !name) {
+        banner.show('Please enter both your email and display name.');
+        return;
+      }
+      try {
+        const data = await relink(email, name);
+        setProfileId(data.profileId);
+        try {
+          const profile = await getProfile(data.profileId);
+          set({ profile });
+        } catch { /* profile loads on the next route */ }
+        toast('Welcome back — this device is reconnected.');
+        navigate('#/');
+      } catch (e) {
+        // A 404/400 means no matching profile; anything else gets its
+        // friendly summary. The copy stays gentle either way.
+        if (e && (e.status === 404 || e.status === 400)) {
+          banner.show('No profile matches that email and name.');
+        } else {
+          banner.show(friendlyError(e));
+        }
+      }
+    });
+    back.appendChild(form);
+    wrap.appendChild(back);
   }
 
   wrap.appendChild(el(`<p class="footer-note center" style="margin-top:2.5rem;max-width:38rem;margin-left:auto;margin-right:auto">

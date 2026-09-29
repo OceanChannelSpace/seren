@@ -573,3 +573,54 @@ export function validateBriefApprove(body) {
   }
   return { ok: errors.length === 0, errors };
 }
+
+/* ------------------------------------------------------------------ */
+/* Guide chat.                                                         */
+/* ------------------------------------------------------------------ */
+
+/** Chat start: {profileId}. */
+export function validateChatStart(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'profileId');
+  return { ok: errors.length === 0, errors };
+}
+
+/** Chat message: {profileId, sessionId, text} — text 1..2000 chars. */
+export function validateChatMessage(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'profileId');
+  checkId(errors, body, 'sessionId');
+  checkShortText(errors, body.text, 'text', { required: true, min: 1, max: 2000 });
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Profile relink: {email, name}. Used when the frontend loses its stored
+ * profile id and the user reclaims their profile with what they know.
+ */
+export function validateRelink(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  if (body.email === undefined || body.email === null) {
+    push(errors, 'email', 'email is required');
+  } else if (typeof body.email !== 'string' || body.email.trim().length < 3 || body.email.trim().length > 254) {
+    push(errors, 'email', 'email must be a string between 3 and 254 characters');
+  }
+  if (body.name === undefined || body.name === null) {
+    push(errors, 'name', 'name is required');
+  } else if (typeof body.name !== 'string' || body.name.trim().length < 1 || body.name.trim().length > 120) {
+    push(errors, 'name', 'name must be a string between 1 and 120 characters');
+  }
+  return { ok: errors.length === 0, errors };
+}

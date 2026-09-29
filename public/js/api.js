@@ -147,6 +147,23 @@ export const getProposals = (sessionId) =>
 export const getBriefProposals = (id) =>
   request('GET', `/api/briefs/${id}/proposals${profileQuery()}`);
 
+// --- SEREN guide chat ---
+// Contract with the chat backend (2026-09-29):
+//   POST /api/chat/start   {profileId}            → { session:{id, stage}, messages:[...], quickReplies?, proposals?, brief? }
+//   POST /api/chat/message {profileId, sessionId, text} → same shape
+//   GET  /api/chat/session/:id?profileId=         → { session:{id, stage}, transcript:[...], question?, brief?, proposals? }
+export const chatStart = (profileId) =>
+  request('POST', '/api/chat/start', { profileId: profileId ?? get('profileId') });
+export const chatMessage = (profileId, sessionId, text) =>
+  request('POST', '/api/chat/message', { profileId: profileId ?? get('profileId'), sessionId, text });
+export const chatResume = (profileId, sessionId) =>
+  request('GET', `/api/chat/session/${encodeURIComponent(sessionId)}${q({ profileId: profileId ?? get('profileId') })}`);
+
+// --- device relink (returning users) ---
+// POST /api/auth/relink {email, name} → 200 {profileId, name} | 404 | 400
+export const relink = (email, name) =>
+  request('POST', '/api/auth/relink', { email, name });
+
 /** Friendly one-line summary for an ApiError, for banners/toasts. */
 export function friendlyError(e) {
   if (e instanceof ApiError) {

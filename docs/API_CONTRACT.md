@@ -203,3 +203,71 @@ share-approved brief; responder: their active share-approved brief),
 truncated ~140 chars each, + a gentle first step derived only from the
 connection type. No invented facts, no certainty language. Declines post
 no message.
+
+---
+
+## Addendum — v4: conversational guide chat (2026-09-29)
+
+The scripted guide engine runs as a chat thread. Bot copy is warm and
+grounded (never clinical/medical/psychic-certainty/spiritual-authority
+claims; SEREN never claims to be human); every bot text ≤ 400 chars.
+
+### Schema v4 (`PRAGMA user_version = 4`)
+
+New `chat_sessions` table: `id`, `profile_id`, `guide_session_id` (nullable),
+`brief_id` (nullable), `stage` (`start` | `seeking` | `followup` |
+`brief_review` | `editing` | `proposals` | `confirm_replace` | `resume_offer`),
+`pending_question_id` (nullable), `pending_field` (nullable),
+`transcript_json` (JSON array of message objects, capped at 60 entries),
+`created_at`, `updated_at`. Index on `profile_id`.
+
+### Endpoints
+
+| Method | Path | Body / Query | Success | Errors |
+|---|---|---|---|---|
+| POST | `/api/chat/start` | `{profileId}` | 201 `{session:{id,stage}, messages[], quickReplies?, proposals?, brief?}` | 400 `validation_error`, 404 profile |
+| POST | `/api/chat/message` | `{profileId, sessionId, text}` (text 1–2000 chars) | 200 `{session:{id,stage}, messages[], quickReplies?, proposals?, brief?}` | 400 `validation_error`, 403 `forbidden` (foreign session), 404 `not_found` |
+| GET | `/api/chat/session/:id?profileId=` | query required | 200 `{session:{id,stage}, transcript[], question?, brief?, proposals?}` | 403 `forbidden`, 404 `not_found` |
+| POST | `/api/auth/relink` | `{email, name}` | 200 `{profileId, name}` (exact case-insensitive email+name match) | 400 `validation_error`, 404 `not_found` (no email/fields ever returned on failure) |
+
+`POST /api/chat/start` resumes context: an **active** brief jumps straight
+to `proposals` with regenerated suggestions; a **draft** brief enters
+`resume_offer` (review the draft or start fresh); otherwise a fresh
+`seeking` greeting with starter chips.
+
+`POST /api/chat/message` routes on the session stage:
+- `seeking` → parses the request into a guide session; <10 chars re-prompts;
+  otherwise asks the first follow-up, or finishes immediately if none.
+- `followup` → records/skips the pending question (free text, single/multi
+  option matching, or `skip`/`pass`); asks the next question or completes the
+  guide → draft brief → `brief_review`. Invalid answers → 400.
+- `brief_review` → `approve` (needs the brief's `shared_text` filled, then
+  approves with consent flags and computes proposals), `edit` (asks which
+  brief field, or which part), or `startover`.
+- `editing` → applies the rewrite to one brief field; `cancel`/`never mind`
+  restores the brief card.
+- `proposals` → points at the suggestion cards; "start a new brief" asks for
+  confirmation first (`confirm_replace`).
+
+**Proposals gating (consent-first, same as `/api/briefs/:id/proposals`):**
+proposals are computed only when the brief is `active` **and** holds
+`consent_save`. They are never computed in the `brief_review` stage.
+`private_notes` never appear in any chat payload; proposals carry no scores.
+
+### Message shapes
+
+- Bot text: `{role:"bot", kind:"text", text}`.
+- Question: `{role:"bot", kind:"question", text, questionId, input
+  ("free"|"single"|"multi"), options:[{value,label}], skippable}`.
+- Brief card: `{role:"bot", kind:"brief", text, brief:{id,status,who_text,
+  intention_text,good_fit_text,offer_text,logistics_text,boundaries_text,
+  shared_text}}` — never `private_notes`, never `email`.
+- User: `{role:"user", kind:"text", text, ts}`.
+- The transcript stores both sides; `GET /api/chat/session/:id` returns it
+  plus stage context (`question` for `followup`, `brief` for
+  `brief_review`/`editing`, `proposals`+`brief` for `proposals`) so the
+  frontend can rebuild the thread after a reload.
+
+`POST /api/auth/relink` is for a frontend that lost its stored profile id:
+on an exact (case-insensitive) email+name match it returns only
+`{profileId, name}`; otherwise 404 `not_found`.

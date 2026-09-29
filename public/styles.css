@@ -992,3 +992,124 @@ body.beta-locked .site-footer { display: none; }
   .consent-check { width: 1.75rem; height: 1.75rem; }
   .brief-actions .btn { flex: 1 1 100%; }
 }
+
+/* ---------- SEREN guide chat ---------- */
+:root {
+  --gold: #d9b878;
+  --gold-soft: rgba(217, 184, 120, 0.13);
+  --gold-line: rgba(217, 184, 120, 0.38);
+}
+
+.chat-wrap {
+  max-width: 44rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.chat-head { text-align: left; }
+.chat-title {
+  margin: 0; font-size: 1.05rem; font-weight: 700;
+  color: var(--seafoam); letter-spacing: 0.02em;
+}
+.chat-sub { margin: 0.15rem 0 0; color: var(--mist-dim); font-size: 0.92rem; }
+
+.chat-thread {
+  display: flex; flex-direction: column; gap: 0.75rem;
+  min-height: 50vh; max-height: 60vh; overflow-y: auto;
+  padding: 0.5rem 0.25rem;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+}
+
+.chat-text { margin: 0; white-space: pre-wrap; }
+
+.bubble-user {
+  align-self: flex-end; max-width: 85%;
+  background: var(--gold-soft); border: 1px solid var(--gold-line);
+  color: var(--ice); border-radius: 18px 18px 5px 18px;
+  padding: 0.7rem 1rem; font-size: 0.98rem; line-height: 1.55;
+  box-shadow: var(--shadow-soft);
+}
+
+.bubble-bot {
+  align-self: flex-start; max-width: 85%;
+  background: var(--card); border: 1px solid var(--line);
+  color: var(--ice); border-radius: 18px 18px 18px 5px;
+  padding: 0.7rem 1rem; font-size: 0.98rem; line-height: 1.55;
+  box-shadow: var(--shadow-soft);
+}
+
+/* option chips inside a bot bubble — reuse .chip visuals */
+.bubble-bot .chip-row { margin-top: 0.7rem; }
+.bubble-bot .chip-row:first-child { margin-top: 0; }
+.chip-skip {
+  border-style: dashed;
+  color: var(--mist);
+}
+.chat-send-row { margin-top: 0.7rem; }
+
+.chat-quick {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  min-height: 0;
+}
+.chat-quick:empty { display: none; }
+.chat-quick .chip { font-size: 0.88rem; }
+
+.chat-composer {
+  position: sticky; bottom: 0.75rem; z-index: 2;
+  display: flex; gap: 0.6rem; align-items: flex-end;
+  background: var(--card-solid); border: 1px solid var(--line);
+  border-radius: 20px; padding: 0.65rem 0.75rem;
+  box-shadow: var(--shadow-soft);
+}
+.chat-composer textarea {
+  flex: 1; min-width: 0; resize: none;
+  max-height: 9rem; line-height: 1.5;
+}
+.chat-composer .btn { flex: 0 0 auto; margin-bottom: 0.1rem; }
+
+/* read-only brief summary rendered inside the thread */
+.chat-thread .brief-card { align-self: stretch; max-width: 100%; }
+
+/* typing indicator */
+.typing {
+  align-self: flex-start; display: inline-flex; align-items: center;
+  gap: 0.32rem; padding: 0.75rem 1.1rem;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 18px 18px 18px 5px;
+}
+.typing i {
+  width: 0.5rem; height: 0.5rem; border-radius: 50%;
+  background: var(--seafoam); opacity: 0.25;
+  animation: typing-blink 1.2s ease-in-out infinite;
+}
+.typing i:nth-child(2) { animation-delay: 0.2s; }
+.typing i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-blink {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* inline chat error (toast also fires) */
+.chat-error {
+  align-self: stretch;
+  color: var(--danger); background: var(--danger-bg);
+  border: 1px solid rgba(224, 138, 122, 0.4); border-radius: 12px;
+  padding: 0.7rem 1rem; font-size: 0.94rem;
+}
+.chat-error[hidden] { display: none; }
+
+/* proposals inside the thread fill the thread width */
+.chat-thread .proposal-card { align-self: stretch; }
+
+/* ---------- guide chat on small screens ---------- */
+@media (max-width: 560px) {
+  .bubble-user, .bubble-bot { max-width: 85%; font-size: 0.95rem; }
+  .chat-thread { min-height: 46vh; max-height: 56vh; }
+  .chat-composer { bottom: 0.5rem; }
+  .chat-composer .btn { padding: 0.7rem 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing i { animation: none; opacity: 0.7; }
+}

@@ -270,6 +270,31 @@ if (userVersion < 3) {
   db.exec('PRAGMA user_version = 3');
 }
 
+// v4: chat sessions for the conversational guide UI. Each row owns a
+// transcript (JSON array of {role, kind, ...} entries) and tracks where the
+// conversation is in the guide -> brief -> proposals flow via `stage`.
+function migrateToV4() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL,
+      guide_session_id INTEGER,
+      brief_id INTEGER,
+      stage TEXT NOT NULL DEFAULT 'start',
+      pending_question_id TEXT,
+      pending_field TEXT,
+      transcript_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_chat_sessions_profile ON chat_sessions(profile_id)');
+}
+if (userVersion < 4) {
+  migrateToV4();
+  db.exec('PRAGMA user_version = 4');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -800,6 +825,68 @@ export function updateGuideSession(id, { answers, status }) {
   db.prepare('UPDATE guide_sessions SET answers_json = ?, status = ? WHERE id = ?')
     .run(JSON.stringify(next.answers), next.status, id);
   return getGuideSession(id);
+}
+
+// ---------- chat sessions (conversational guide UI) ----------
+
+function toChatSession(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    guideSessionId: row.guide_session_id ?? null,
+    briefId: row.brief_id ?? null,
+    stage: row.stage || 'start',
+    pendingQuestionId: row.pending_question_id || null,
+    pendingField: row.pending_field || null,
+    transcript: parseJson(row.transcript_json, []),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const getChatSessionStmt = db.prepare('SELECT * FROM chat_sessions WHERE id = ?');
+export function getChatSession(id) {
+  return toChatSession(getChatSessionStmt.get(id));
+}
+
+/**
+ * Create a chat session. Optional extras: guideSessionId, briefId,
+ * pendingQuestionId, pendingField, and an initial transcript array.
+ */
+export function createChatSession({ profileId, stage = 'start', guideSessionId = null,
+  briefId = null, pendingQuestionId = null, pendingField = null, transcript = [] }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO chat_sessions
+      (profile_id, guide_session_id, brief_id, stage, pending_question_id,
+       pending_field, transcript_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(profileId, guideSessionId, briefId, stage, pendingQuestionId, pendingField,
+    JSON.stringify(transcript), now, now);
+  return getChatSession(Number(result.lastInsertRowid));
+}
+
+/**
+ * Partial update. patch keys: guideSessionId, briefId, stage,
+ * pendingQuestionId, pendingField, transcript (array -> stored as JSON).
+ * updated_at always moves.
+ */
+export function updateChatSession(id, patch = {}) {
+  const existing = getChatSession(id);
+  if (!existing) return null;
+  const cols = [];
+  const params = [];
+  if (patch.guideSessionId !== undefined) { cols.push('guide_session_id = ?'); params.push(patch.guideSessionId); }
+  if (patch.briefId !== undefined) { cols.push('brief_id = ?'); params.push(patch.briefId); }
+  if (patch.stage !== undefined) { cols.push('stage = ?'); params.push(patch.stage); }
+  if (patch.pendingQuestionId !== undefined) { cols.push('pending_question_id = ?'); params.push(patch.pendingQuestionId); }
+  if (patch.pendingField !== undefined) { cols.push('pending_field = ?'); params.push(patch.pendingField); }
+  if (patch.transcript !== undefined) { cols.push('transcript_json = ?'); params.push(JSON.stringify(patch.transcript)); }
+  cols.push('updated_at = ?');
+  params.push(new Date().toISOString());
+  db.prepare(`UPDATE chat_sessions SET ${cols.join(', ')} WHERE id = ?`).run(...params, id);
+  return getChatSession(id);
 }
 
 // ---------- connection briefs ----------

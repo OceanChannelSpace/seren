@@ -17,12 +17,18 @@ import {
   validateMessageInput, validateReportInput, validatePlanInput,
   validateGuideStart, validateGuideAnswer,
   validateBriefDraft, validateBriefUpdate, validateBriefApprove,
+  validateChatStart, validateChatMessage, validateRelink,
 } from './validate.js';
 import { findBestMatch, buildIntroNote, findMatches } from './match.js';
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
   remainingQuestions, getQuestionDef, buildBriefDraft, buildWarmIntroMessage,
 } from './guide.js';
+import {
+  greetingMessages, questionMessage, briefMessage, publicBrief,
+  classifyReviewText, detectEditField, fieldLabel,
+  matchOptions, isSkipText, STARTERS, APPROVE_QUICK_REPLIES,
+} from './chat.js';
 import {
   db,
   hasSeedProfiles,
@@ -67,6 +73,9 @@ import {
   createGuideSession,
   getGuideSession,
   updateGuideSession,
+  createChatSession,
+  getChatSession,
+  updateChatSession,
   getBrief,
   getBriefByProfile,
   upsertDraftBrief,
@@ -1158,6 +1167,438 @@ app.get('/api/briefs/:id/proposals', (req, res) => {
       'An active connection brief with saved consent is required to see proposals.');
   }
   res.json({ proposals: briefProposals(profile, brief) });
+});
+
+// ---------- conversational guide chat ----------
+//
+// The same scripted guide engine (src/guide.js) as a chat thread. Bot
+// messages are built by pure helpers in src/chat.js; this layer owns the
+// transcript, stage machine, and brief/proposal gating.
+//
+// Consent rule, same as GET /api/briefs/:id/proposals: proposals are only
+// computed for an ACTIVE brief with consent_save. The brief-review stage
+// never computes proposals.
+
+const TRANSCRIPT_CAP = 60;
+
+function chatSessionView(session) {
+  return { id: session.id, stage: session.stage };
+}
+
+const botText = (text) => ({ role: 'bot', kind: 'text', text });
+
+/** Materialized follow-up questions for a chat session's guide session. */
+function chatGuideQuestions(profile, gs) {
+  return selectFollowUps({ ...(gs.parsed || {}), requestText: gs.requestText }, profile);
+}
+
+/** Quick-reply chips for single/multi questions (label taps), or undefined. */
+function questionQuickReplies(q) {
+  if (!q || (q.type !== 'single' && q.type !== 'multi')) return undefined;
+  return (q.options || []).map((o) => o.label);
+}
+
+function chatTurnError(status, code, message) {
+  return { error: { status, code, message } };
+}
+
+/**
+ * Finish the guide flow: mark the guide session complete, build/replace the
+ * draft brief, and move the chat to brief_review.
+ */
+function finishGuideChat(profile, session, gs) {
+  const done = updateGuideSession(gs.id, { status: 'complete' });
+  const draft = buildBriefDraft(profile, {
+    ...gs,
+    requestText: gs.requestText,
+    parsed: gs.parsed,
+    answers: done.answers,
+  });
+  const brief = upsertDraftBrief(profile.id, draft);
+  return {
+    patch: { stage: 'brief_review', briefId: brief.id, pendingQuestionId: null, pendingField: null },
+    messages: [briefMessage(brief)],
+    quickReplies: APPROVE_QUICK_REPLIES,
+    brief: publicBrief(brief),
+  };
+}
+
+/** 'seeking' stage: turn the request into a guide session + first question. */
+function chatHandleSeeking(profile, session, text) {
+  if (text.length < 10) {
+    return {
+      messages: [botText('Share a little more — a sentence or two — so I can guide you well.')],
+    };
+  }
+  const parsed = parseIntent(text);
+  const gs = createGuideSession({ profileId: profile.id, requestText: text, parsed });
+  const qs = chatGuideQuestions(profile, gs);
+  if (qs.length === 0) return finishGuideChat(profile, session, gs);
+  return {
+    patch: { guideSessionId: gs.id, stage: 'followup', pendingQuestionId: qs[0].id },
+    messages: [botText('Thank you — I hear you.'), questionMessage(qs[0])],
+    quickReplies: questionQuickReplies(qs[0]),
+  };
+}
+
+/** Advance after an answer was recorded; ask the next question or finish. */
+function chatAdvanceFollowup(profile, session, gs, answers) {
+  const updated = updateGuideSession(gs.id, { answers });
+  const remaining = chatGuideQuestions(profile, updated).filter((q) => !(q.id in answers));
+  if (remaining.length === 0) return finishGuideChat(profile, session, updated);
+  return {
+    patch: { pendingQuestionId: remaining[0].id },
+    messages: [questionMessage(remaining[0])],
+    quickReplies: questionQuickReplies(remaining[0]),
+  };
+}
+
+/** 'followup' stage: answer (or skip) the pending question. */
+function chatHandleFollowup(profile, session, text) {
+  const gs = session.guideSessionId ? getGuideSession(session.guideSessionId) : null;
+  if (!gs) return chatTurnError(404, ERROR_CODES.NOT_FOUND, 'Guide session not found.');
+  const questions = chatGuideQuestions(profile, gs);
+  const q = questions.find((qq) => qq.id === session.pendingQuestionId);
+  if (!q) {
+    return chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
+      'This question is no longer open.');
+  }
+  let answers;
+  try {
+    if (isSkipText(text)) {
+      if (q.skippable === false) {
+        return {
+          messages: [
+            botText('This one needs an answer — pick whatever feels closest.'),
+            questionMessage(q),
+          ],
+          quickReplies: questionQuickReplies(q) || [],
+        };
+      }
+      answers = answerQuestion({ answers: gs.answers, questions }, q.id, null);
+    } else if (q.type === 'free') {
+      answers = answerQuestion({ answers: gs.answers, questions }, q.id, text);
+    } else {
+      const matched = matchOptions(text, q);
+      if (!matched || matched.length === 0) {
+        return {
+          messages: [
+            botText("I didn't quite catch that — which of these fits best?"),
+            questionMessage(q),
+          ],
+          quickReplies: questionQuickReplies(q) || [],
+        };
+      }
+      const value = q.type === 'single' ? matched[0] : matched;
+      answers = answerQuestion({ answers: gs.answers, questions }, q.id, value);
+    }
+  } catch (e) {
+    return chatTurnError(400, ERROR_CODES.VALIDATION_ERROR, e.message);
+  }
+  return chatAdvanceFollowup(profile, session, gs, answers);
+}
+
+/** 'brief_review' stage: approve, edit, or start over. */
+function chatHandleBriefReview(profile, session, text) {
+  const kind = classifyReviewText(text);
+  if (kind === 'approve') {
+    const b = session.briefId ? getBrief(session.briefId) : null;
+    if (!b) return chatTurnError(404, ERROR_CODES.NOT_FOUND, 'Brief not found.');
+    if (!(b.shared_text || '').trim()) {
+      return {
+        messages: [botText(
+          'Your brief needs the "exact text" section filled in — you can add it on the brief page, or tell me here and I\'ll add it.',
+        )],
+      };
+    }
+    // Consent-first: approval sets consent_save + consent_share explicitly.
+    const approved = approveBrief(b.id, { sharedText: b.shared_text, consentShare: true });
+    return {
+      patch: { stage: 'proposals', pendingQuestionId: null, pendingField: null },
+      messages: [botText(
+        'Your brief is approved. Only your exact approved text will ever be shown to another person. Let me look for gentle fits…',
+      )],
+      proposals: briefProposals(profile, approved),
+      brief: publicBrief(approved),
+      quickReplies: ['Start a new brief'],
+    };
+  }
+  if (kind === 'edit') {
+    const field = detectEditField(text);
+    if (!field) {
+      return {
+        messages: [botText('Which part would you like to change?')],
+        quickReplies: ['Intention', 'What I offer', 'Boundaries', 'Who I am', 'Logistics'],
+      };
+    }
+    return {
+      patch: { stage: 'editing', pendingField: field },
+      messages: [botText(`How would you like "${fieldLabel(field)}" to read?`)],
+    };
+  }
+  if (kind === 'startover') {
+    return {
+      patch: {
+        stage: 'seeking', guideSessionId: null, briefId: null,
+        pendingQuestionId: null, pendingField: null,
+      },
+      messages: [
+        botText('Let\'s begin again, fresh.'),
+        botText('Who — or what kind of connection — would feel meaningful right now?'),
+      ],
+      quickReplies: STARTERS,
+    };
+  }
+  return {
+    messages: [botText(
+      'I can help you finish your brief — say "looks good" when it\'s ready, or tell me what to change.',
+    )],
+    quickReplies: APPROVE_QUICK_REPLIES,
+  };
+}
+
+/** 'editing' stage: apply a rewrite to one brief field, or cancel. */
+function chatHandleEditing(profile, session, text) {
+  if (/cancel|never mind/i.test(text)) {
+    const b = session.briefId ? getBrief(session.briefId) : null;
+    if (!b) return chatTurnError(404, ERROR_CODES.NOT_FOUND, 'Brief not found.');
+    return {
+      patch: { stage: 'brief_review', pendingField: null },
+      messages: [briefMessage(b)],
+      quickReplies: APPROVE_QUICK_REPLIES,
+    };
+  }
+  if (!session.pendingField) {
+    return chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
+      'There is nothing to edit right now.');
+  }
+  const b = session.briefId ? getBrief(session.briefId) : null;
+  if (!b) return chatTurnError(404, ERROR_CODES.NOT_FOUND, 'Brief not found.');
+  const brief = updateBrief(b.id, { [session.pendingField]: text });
+  if (!brief) {
+    return chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
+      'That change could not be saved.');
+  }
+  return {
+    patch: { stage: 'brief_review', pendingField: null },
+    messages: [botText('Updated. Here is your brief now:'), briefMessage(brief)],
+    quickReplies: APPROVE_QUICK_REPLIES,
+  };
+}
+
+/** 'proposals' stage: proposals are already shown; offer a fresh start. */
+function chatHandleProposals(profile, session, text) {
+  if (/start a new brief|start over|new brief/i.test(text)) {
+    return {
+      patch: { stage: 'confirm_replace' },
+      messages: [botText('Starting fresh will replace your current brief. Are you sure?')],
+      quickReplies: ['Yes, start fresh', 'Keep my brief'],
+    };
+  }
+  return {
+    messages: [botText(
+      'Your suggestions are just above — tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.',
+    )],
+    quickReplies: ['Start a new brief'],
+  };
+}
+
+/** 'confirm_replace' stage: confirm dropping the current brief. */
+function chatHandleConfirmReplace(profile, session, text) {
+  if (/yes|start fresh/i.test(text)) {
+    return {
+      patch: {
+        stage: 'seeking', guideSessionId: null, briefId: null,
+        pendingQuestionId: null, pendingField: null,
+      },
+      messages: [
+        botText('Fresh start it is.'),
+        botText('Who — or what kind of connection — would feel meaningful right now?'),
+      ],
+      quickReplies: STARTERS,
+    };
+  }
+  return {
+    patch: { stage: 'proposals' },
+    messages: [botText('Keeping your brief as it is — your suggestions are just above.')],
+  };
+}
+
+/** 'resume_offer' stage: review the existing draft, or start fresh. */
+function chatHandleResumeOffer(profile, session, text) {
+  if (/review|draft/i.test(text)) {
+    const brief = getBriefByProfile(profile.id);
+    if (!brief) return chatTurnError(404, ERROR_CODES.NOT_FOUND, 'Brief not found.');
+    return {
+      patch: { stage: 'brief_review', briefId: brief.id },
+      messages: [briefMessage(brief)],
+      quickReplies: APPROVE_QUICK_REPLIES,
+    };
+  }
+  // Treat as fresh seeking text; the stored draft is replaced when the
+  // guide flow completes.
+  return chatHandleSeeking(profile, session, text);
+}
+
+/**
+ * Append a chat turn to the transcript (capped), persist the stage patch,
+ * and shape the response.
+ */
+function commitChatTurn(session, userEntry, turn) {
+  const transcript = [...(session.transcript || []), userEntry, ...turn.messages].slice(-TRANSCRIPT_CAP);
+  const updated = updateChatSession(session.id, { ...(turn.patch || {}), transcript });
+  const body = { session: chatSessionView(updated), messages: turn.messages };
+  if (turn.quickReplies !== undefined) body.quickReplies = turn.quickReplies;
+  if (turn.proposals !== undefined) body.proposals = turn.proposals;
+  if (turn.brief !== undefined) body.brief = turn.brief;
+  return body;
+}
+
+/**
+ * Start a chat. Resumes the right place: an ACTIVE brief jumps to proposals,
+ * a DRAFT brief offers review-or-fresh, otherwise a fresh greeting.
+ */
+app.post('/api/chat/start', (req, res) => {
+  const { ok, errors } = validateChatStart(req.body);
+  if (!ok) return validationErr(res, errors);
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+
+  const brief = getBriefByProfile(profile.id);
+  if (brief && brief.status === 'active') {
+    const gated = brief.status === 'active' && brief.consent_save;
+    const proposals = gated ? briefProposals(profile, brief) : [];
+    const firstName = String(profile.name || 'friend').trim().split(/\s+/)[0] || 'friend';
+    const messages = [botText(
+      `Welcome back, ${firstName}. Your brief is active — here are your current suggestions.`,
+    )];
+    const session = createChatSession({
+      profileId: profile.id, stage: 'proposals', briefId: brief.id, transcript: messages,
+    });
+    return res.status(201).json({
+      session: chatSessionView(session),
+      messages,
+      quickReplies: ['Start a new brief'],
+      proposals,
+      brief: publicBrief(brief),
+    });
+  }
+  if (brief && brief.status === 'draft') {
+    const messages = [botText(
+      'Welcome back. You have a draft brief we haven\'t finished — want to review it, or start fresh?',
+    )];
+    const session = createChatSession({
+      profileId: profile.id, stage: 'resume_offer', briefId: brief.id, transcript: messages,
+    });
+    return res.status(201).json({
+      session: chatSessionView(session),
+      messages,
+      quickReplies: ['Review my draft', 'Start fresh'],
+    });
+  }
+  const messages = greetingMessages(profile);
+  const session = createChatSession({
+    profileId: profile.id, stage: 'seeking', transcript: messages,
+  });
+  return res.status(201).json({
+    session: chatSessionView(session),
+    messages,
+    quickReplies: STARTERS,
+  });
+});
+
+app.post('/api/chat/message', (req, res) => {
+  const { ok, errors } = validateChatMessage(req.body);
+  if (!ok) return validationErr(res, errors);
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+
+  const sessionId = parseId(req.body.sessionId);
+  const session = sessionId === null ? null : getChatSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Chat session not found.');
+  if (session.profileId !== profile.id) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN,
+      'This chat session belongs to another profile.');
+  }
+
+  const text = String(req.body.text).trim();
+  const userEntry = { role: 'user', kind: 'text', text, ts: Date.now() };
+
+  let turn;
+  switch (session.stage) {
+    case 'seeking': turn = chatHandleSeeking(profile, session, text); break;
+    case 'followup': turn = chatHandleFollowup(profile, session, text); break;
+    case 'brief_review': turn = chatHandleBriefReview(profile, session, text); break;
+    case 'editing': turn = chatHandleEditing(profile, session, text); break;
+    case 'proposals': turn = chatHandleProposals(profile, session, text); break;
+    case 'confirm_replace': turn = chatHandleConfirmReplace(profile, session, text); break;
+    case 'resume_offer': turn = chatHandleResumeOffer(profile, session, text); break;
+    default:
+      turn = chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
+        'This chat session is in an unknown state.');
+  }
+  if (turn.error) {
+    return err(res, turn.error.status, turn.error.code, turn.error.message);
+  }
+  res.json(commitChatTurn(session, userEntry, turn));
+});
+
+/**
+ * Restore a chat: the full transcript plus stage-context (the pending
+ * question, the brief under review, or current proposals) so the frontend
+ * can rebuild the thread after a reload.
+ */
+app.get('/api/chat/session/:id', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const sessionId = parseId(req.params.id);
+  const session = sessionId === null ? null : getChatSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Chat session not found.');
+  if (session.profileId !== profile.id) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN,
+      'This chat session belongs to another profile.');
+  }
+
+  const body = { session: chatSessionView(session), transcript: session.transcript || [] };
+  if (session.stage === 'followup' && session.pendingQuestionId && session.guideSessionId) {
+    const gs = getGuideSession(session.guideSessionId);
+    if (gs) {
+      const q = chatGuideQuestions(profile, gs).find((qq) => qq.id === session.pendingQuestionId);
+      if (q) body.question = questionMessage(q);
+    }
+  }
+  if ((session.stage === 'brief_review' || session.stage === 'editing') && session.briefId) {
+    const brief = getBrief(session.briefId);
+    if (brief) body.brief = publicBrief(brief);
+  }
+  if (session.stage === 'proposals') {
+    const brief = session.briefId ? getBrief(session.briefId) : getBriefByProfile(profile.id);
+    if (brief) {
+      if (brief.status === 'active' && brief.consent_save) {
+        body.proposals = briefProposals(profile, brief);
+      }
+      body.brief = publicBrief(brief);
+    }
+  }
+  res.json(body);
+});
+
+/**
+ * Reclaim a profile when the frontend loses its stored profile id.
+ * Returns only the id + name on an exact (case-insensitive) email+name
+ * match — never the email or any other profile field.
+ */
+app.post('/api/auth/relink', (req, res) => {
+  const { ok, errors } = validateRelink(req.body);
+  if (!ok) return validationErr(res, errors);
+  const lookup = getProfileByEmail(String(req.body.email).trim().toLowerCase());
+  const match = lookup
+    && String(lookup.name).trim().toLowerCase() === String(req.body.name).trim().toLowerCase();
+  if (match) {
+    return res.json({ profileId: lookup.id, name: lookup.name });
+  }
+  return err(res, 404, ERROR_CODES.NOT_FOUND,
+    'No profile matches that email and name.');
 });
 
 // ---------- static frontend ----------
