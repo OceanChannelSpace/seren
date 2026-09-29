@@ -103,6 +103,20 @@ function requestCard(intro, meId, direction, onDone) {
   c.appendChild(head);
   c.appendChild(statusPill(intro.status));
 
+  // Recipient sees ONLY the requester's approved brief text + name + reason —
+  // never private notes, never unapproved fields.
+  if (direction === 'incoming' && intro.requesterSharedText) {
+    c.appendChild(el(`<h4 class="proposal-label">In their own words</h4>`));
+    c.appendChild(el(`<p class="shared-words">${esc(intro.requesterSharedText)}</p>`));
+  }
+  if (direction === 'incoming' && intro.forCandidate) {
+    const serve = Array.isArray(intro.forCandidate) ? intro.forCandidate.join(' ') : String(intro.forCandidate);
+    if (serve) {
+      c.appendChild(el(`<h4 class="proposal-label">Why this might serve you</h4>`));
+      c.appendChild(el(`<p class="about-text">${esc(serve)}</p>`));
+    }
+  }
+
   const msg = messageBlock(intro);
   if (msg) c.appendChild(msg);
   const bnd = boundaryBlock(intro);

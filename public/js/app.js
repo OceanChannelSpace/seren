@@ -15,6 +15,7 @@ import { renderMessages } from './views/messages.js';
 import { renderCircles, renderCircleDetail, renderCircleNew } from './views/circles.js';
 import { renderMe, renderProfileEdit } from './views/me.js';
 import { renderSaved } from './views/saved.js';
+import { renderBrief } from './views/brief.js';
 
 async function boot() {
   // Beta gate state.
@@ -41,6 +42,7 @@ async function boot() {
   addRoute('/discover/match', renderMatchDetail, { title: 'Person', requiresBeta: true, requiresProfile: true });
   addRoute('/modes', renderModes, { title: 'Ways to begin', requiresBeta: true, requiresProfile: true });
   addRoute('/requests', renderRequests, { title: 'Requests', requiresBeta: true, requiresProfile: true });
+  addRoute('/brief', renderBrief, { title: 'Your connection brief', requiresBeta: true, requiresProfile: true });
   addRoute('/connections', renderConnections, { title: 'Connections', requiresBeta: true, requiresProfile: true });
   addRoute('/connections/messages', renderMessages, { title: 'Conversation', requiresBeta: true, requiresProfile: true });
   addRoute('/circles', renderCircles, { title: 'Circles', requiresBeta: true, requiresProfile: true });

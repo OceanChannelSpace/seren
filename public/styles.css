@@ -955,3 +955,40 @@ body.beta-locked .site-footer { display: none; }
   letter-spacing: 0.08em; color: var(--seafoam);
 }
 .first-step p { margin: 0; color: var(--mist); font-size: 0.95rem; }
+
+/* ---------- connection brief ---------- */
+.consent-row {
+  display: flex; gap: 0.8rem; align-items: flex-start;
+  margin-top: 1rem; padding: 0.75rem 0; border-top: 1px solid var(--line-soft);
+}
+.consent-row:first-of-type { border-top: none; margin-top: 0.5rem; }
+.consent-check {
+  width: 1.5rem; height: 1.5rem; flex: 0 0 auto; margin-top: 0.15rem;
+  accent-color: var(--seafoam, #3ec995); cursor: pointer;
+}
+.consent-label { font-weight: 600; font-size: 1rem; line-height: 1.45; cursor: pointer; }
+.consent-row .textarea { margin-top: 0.6rem; }
+.shared-words {
+  border-left: 3px solid var(--seafoam-deep, #2ea37a);
+  padding: 0.5rem 0.9rem; margin: 0.5rem 0 0;
+  color: var(--mist); font-size: 0.95rem; white-space: pre-wrap;
+}
+
+/* ---------- system (SEREN connector) messages ---------- */
+.message-system {
+  align-self: center; max-width: 92%; text-align: center;
+  background: var(--seafoam-pale);
+  border: 1px dashed rgba(125, 240, 196, 0.45);
+  border-radius: 14px;
+}
+.message-system .system-label {
+  margin: 0 0 0.4rem; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--seafoam);
+}
+.message-system .msg-meta { text-align: center; }
+
+/* ---------- brief form on small screens ---------- */
+@media (max-width: 560px) {
+  .consent-check { width: 1.75rem; height: 1.75rem; }
+  .brief-actions .btn { flex: 1 1 100%; }
+}

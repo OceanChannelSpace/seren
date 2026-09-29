@@ -124,6 +124,26 @@ export const unblockProfile = (profileId, blockedId) =>
 export const reportProfile = (payload) =>
   request('POST', '/api/reports', { reporterId: get('profileId'), ...payload });
 
+// --- connection briefs ---
+// NOTE: the running backend requires profileId on every brief endpoint
+// (contract text omitted it) — helpers always send it.
+export const createBriefFromSession = (sessionId) =>
+  request('POST', '/api/briefs', { profileId: get('profileId'), sessionId });
+export const getMyBrief = () =>
+  request('GET', `/api/briefs/mine${profileQuery()}`);
+export const updateBrief = (id, patch) =>
+  request('PATCH', `/api/briefs/${id}`, { profileId: get('profileId'), ...patch });
+export const approveBrief = (id, { shared_text, consent_save, consent_share }) =>
+  request('POST', `/api/briefs/${id}/approve`, { profileId: get('profileId'), shared_text, consent_save, consent_share });
+export const pauseBrief = (id) =>
+  request('POST', `/api/briefs/${id}/pause`, { profileId: get('profileId') });
+export const resumeBrief = (id) =>
+  request('POST', `/api/briefs/${id}/resume`, { profileId: get('profileId') });
+export const withdrawBrief = (id) =>
+  request('POST', `/api/briefs/${id}/withdraw`, { profileId: get('profileId') });
+export const getProposals = (sessionId) =>
+  request('GET', `/api/guide/proposals${profileQuery(null, { sessionId })}`);
+
 /** Friendly one-line summary for an ApiError, for banners/toasts. */
 export function friendlyError(e) {
   if (e instanceof ApiError) {

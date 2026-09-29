@@ -21,6 +21,16 @@ const REPORT_OPTIONS = [
 ];
 
 function messageNode(msg, meId) {
+  // senderId 0 = a SEREN system message (e.g. the warm-intro note after a
+  // mutual accept). Rendered distinctly — never as if a person wrote it.
+  if (msg.senderId === 0) {
+    return el(`
+      <div class="message message-system">
+        <p class="system-label">SEREN · connector</p>
+        <p class="msg-body">${esc(msg.body)}</p>
+        <p class="msg-meta">${esc(timeAgo(msg.createdAt))}</p>
+      </div>`);
+  }
   const mine = msg.senderId === meId;
   return el(`
     <div class="message${mine ? ' message-mine' : ''}">

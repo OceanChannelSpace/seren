@@ -4,7 +4,9 @@
 import { get, clearSession, metaList, practiceLabel, intentionLabel, formatLabel } from '../state.js';
 import {
   getProfile, updateProfile, listBlocks, unblockProfile, friendlyError,
+  getMyBrief, pauseBrief, resumeBrief, withdrawBrief,
 } from '../api.js';
+import { briefPill } from './brief.js';
 import {
   el, esc, card, pageShell, errorBanner, toast, announce, avatarFor,
   chipGroup, chipSingle, field, textInput, textArea, selectInput,
@@ -118,6 +120,91 @@ export async function renderMe(root, ctx) {
     summary.appendChild(el(`<div class="btn-row"><a class="btn btn-secondary" href="#/me/edit">Edit profile</a>
       <a class="btn btn-ghost" href="#/saved">Saved items</a></div>`));
     shell.body.appendChild(summary);
+
+    // (b) My connection brief
+    const briefCard = card([el(`<h3 style="margin-top:0">My connection brief</h3>`)]);
+    briefCard.appendChild(el(`<p class="field-hint">What SEREN understood about what you’re seeking — and exactly what another person may see.</p>`));
+    const briefBody = el(`<div></div>`);
+    briefCard.appendChild(briefBody);
+    shell.body.appendChild(briefCard);
+
+    async function loadBriefCard() {
+      briefBody.innerHTML = '';
+      let brief = null;
+      try {
+        brief = (await getMyBrief()).brief || null;
+      } catch {
+        briefBody.appendChild(el(`<p class="field-hint">Couldn’t load your brief right now.</p>`));
+        return;
+      }
+      if (!brief) {
+        briefBody.appendChild(el(`<p class="field-hint">No brief yet. Tell SEREN what would feel meaningful and it will draft one for your review.</p>`));
+        briefBody.appendChild(el(`<div class="btn-row"><a class="btn btn-secondary btn-small" href="#/">Start a guided conversation</a></div>`));
+        return;
+      }
+      const row = el(`<div style="display:flex;align-items:center;gap:0.75rem;margin:0.5rem 0"></div>`);
+      row.appendChild(briefPill(brief.status));
+      briefBody.appendChild(row);
+      const excerpt = brief.shared_text && brief.consent_share
+        ? brief.shared_text
+        : (brief.intention_text || brief.who_text || '');
+      if (excerpt) briefBody.appendChild(el(`<p class="about-text">${esc(excerpt.length > 220 ? excerpt.slice(0, 220) + '…' : excerpt)}</p>`));
+      else briefBody.appendChild(el(`<p class="field-hint">Still a draft — nothing written yet.</p>`));
+
+      const actions = el(`<div class="btn-row"></div>`);
+      const edit = el(`<a class="btn btn-secondary btn-small" href="#/brief">Edit</a>`);
+      actions.appendChild(edit);
+      if (brief.status === 'paused') {
+        const resume = el(`<button type="button" class="btn btn-primary btn-small">Resume</button>`);
+        resume.addEventListener('click', async () => {
+          resume.disabled = true;
+          try {
+            await resumeBrief(brief.id);
+            toast('Discovery resumed.');
+            await loadBriefCard();
+          } catch (e) { toast(friendlyError(e)); resume.disabled = false; }
+        });
+        actions.appendChild(resume);
+      } else if (brief.status === 'active' || brief.status === 'draft') {
+        const pause = el(`<button type="button" class="btn btn-ghost btn-small">Pause</button>`);
+        pause.addEventListener('click', async () => {
+          const ok = await confirmDialog({
+            title: 'Pause discovery?',
+            body: 'SEREN will stop looking for matches. Your brief stays saved — you can resume any time.',
+            confirmLabel: 'Pause',
+          });
+          if (!ok) return;
+          pause.disabled = true;
+          try {
+            await pauseBrief(brief.id);
+            toast('Discovery paused.');
+            await loadBriefCard();
+          } catch (e) { toast(friendlyError(e)); pause.disabled = false; }
+        });
+        actions.appendChild(pause);
+      }
+      if (brief.status !== 'withdrawn') {
+        const withdraw = el(`<button type="button" class="btn btn-ghost btn-small">Withdraw</button>`);
+        withdraw.addEventListener('click', async () => {
+          const ok = await confirmDialog({
+            title: 'Withdraw your brief?',
+            body: 'This removes the brief from matching. It stays private to you, and you can start a new one any time.',
+            confirmLabel: 'Withdraw brief',
+            danger: true,
+          });
+          if (!ok) return;
+          withdraw.disabled = true;
+          try {
+            await withdrawBrief(brief.id);
+            toast('Brief withdrawn.');
+            await loadBriefCard();
+          } catch (e) { toast(friendlyError(e)); withdraw.disabled = false; }
+        });
+        actions.appendChild(withdraw);
+      }
+      briefBody.appendChild(actions);
+    }
+    await loadBriefCard();
 
     // (c) Discovery & request settings
     const patchSettings = async (patch) => {

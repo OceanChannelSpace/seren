@@ -10,6 +10,8 @@ const state = {
   betaEntered: null,   // null = unknown, true/false = beta gate state
   route: null,         // current route descriptor
   routeParams: {},
+  brief: null,         // our latest connection brief (draft/active/paused/withdrawn)
+  guideSessionId: null, // guide session that produced the current brief, for proposals
 };
 
 function getProfileId() {

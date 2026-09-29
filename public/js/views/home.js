@@ -2,8 +2,8 @@
 // Authenticated users land here instead of a profile grid: they tell SEREN
 // what would feel meaningful, answer a few follow-up questions, and receive
 // thoughtful, consent-first introduction proposals. No scores, no swiping.
-import { get } from '../state.js';
-import { ApiError, friendlyError } from '../api.js';
+import { get, set } from '../state.js';
+import { ApiError, friendlyError, createBriefFromSession } from '../api.js';
 import { navigate } from '../router.js';
 import { renderWelcome } from './welcome.js';
 import {
@@ -130,7 +130,7 @@ export async function renderHome(root, ctx) {
   function renderQuestions(session, questions) {
     body.querySelectorAll('.guide-pane').forEach((n) => n.remove());
     banner.clear();
-    if (!questions.length) { renderProposals([]); return; }
+    if (!questions.length) { finishGuide(); return; }
 
     const pane = el(`<div class="guide-pane"></div>`);
     body.appendChild(pane);
@@ -139,7 +139,7 @@ export async function renderHome(root, ctx) {
     function showQuestion() {
       pane.innerHTML = '';
       const q = questions[index];
-      if (!q) { renderProposals([]); return; }
+      if (!q) { finishGuide(); return; }
 
       const qc = card();
       qc.appendChild(el(`<p class="kicker">A couple of quick questions</p>`));
@@ -200,7 +200,7 @@ export async function renderHome(root, ctx) {
             : { profileId, questionId: question.id, value };
           const data = await guideRequest('POST', `/api/guide/sessions/${session.id}/answer`, payload);
           if (data.complete) {
-            renderProposals(data.proposals || []);
+            finishGuide();
             return;
           }
           const rest = data.questions || [];
@@ -208,13 +208,30 @@ export async function renderHome(root, ctx) {
             questions.splice(index + 1, questions.length, ...rest);
           }
           index += 1;
-          if (index >= questions.length) renderProposals(data.proposals || []);
+          if (index >= questions.length) finishGuide();
           else showQuestion();
         } catch (e) {
           banner.show(friendlyError(e));
         } finally {
           next.disabled = false;
         }
+      }
+    }
+
+    /** Guide complete → turn the session into a connection brief for review.
+     *  The brief review screen (views/brief.js) owns approvals + proposals.
+     *  Falls back to legacy inline proposals if the briefs API isn't there. */
+    async function finishGuide() {
+      try {
+        const { brief } = await createBriefFromSession(session.id);
+        set({ brief, guideSessionId: session.id });
+        navigate('#/brief');
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) {
+          renderProposals([]);
+          return;
+        }
+        banner.show(friendlyError(e));
       }
     }
 
@@ -249,58 +266,6 @@ export async function renderHome(root, ctx) {
     announce(list.length ? `${list.length} introduction suggestions.` : 'No suggestions this time.');
   }
 
-  function proposalCard(p) {
-    const c = card();
-    c.classList.add('proposal-card');
-    const cand = p.candidate || {};
-    const sub = [cand.pronouns, cand.region].filter(Boolean).join(' · ');
-    const head = el(`<div class="person-head"></div>`);
-    head.appendChild(el(`<h3>${esc(cand.name || 'A fellow traveler')}${cand.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}</h3>`));
-    if (sub) head.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
-    c.appendChild(head);
-
-    if (p.connectionTypeLabel) {
-      c.appendChild(el(`<p class="request-meta" style="margin-top:0.5rem">${esc(p.connectionTypeLabel)}</p>`));
-    }
-
-    const fits = Array.isArray(p.whyItFits) && p.whyItFits.length ? p.whyItFits : null;
-    if (fits) {
-      c.appendChild(el(`<h4 class="proposal-label">Why this might fit</h4>`));
-      const ul = el(`<ul class="reason-list"></ul>`);
-      for (const r of fits.slice(0, 4)) ul.appendChild(el(`<li>${esc(r)}</li>`));
-      c.appendChild(ul);
-    }
-
-    if (p.suggestedFirst) {
-      const callout = el(`<div class="first-step"></div>`);
-      callout.appendChild(el(`<h4>A gentle first step</h4>`));
-      callout.appendChild(el(`<p>${esc(p.suggestedFirst)}</p>`));
-      c.appendChild(callout);
-    }
-
-    const actions = el(`<div class="match-actions"></div>`);
-    const reqBtn = el(`<button type="button" class="btn btn-primary btn-small">Request introduction</button>`);
-    reqBtn.addEventListener('click', () => {
-      // Hands off to the match detail composer, which carries the full
-      // staged-consent request flow (type, message, format, commitment, tone).
-      navigate(`#/discover/match?id=${cand.id}`);
-    });
-    const notNow = el(`<button type="button" class="btn btn-ghost btn-small">Not now</button>`);
-    notNow.addEventListener('click', () => {
-      c.remove();
-      announce('Suggestion dismissed.');
-      toast('Set aside quietly. Nothing was sent.');
-      const remaining = c.closest('.guide-pane')?.querySelectorAll('.proposal-card');
-      if (remaining && !remaining.length) {
-        const again = el(`<p class="guide-secondary">Take your time — <a href="#/">ask again</a> whenever you like, or <a href="#/discover">browse quietly</a>.</p>`);
-        c.closest('.guide-pane').appendChild(again);
-      }
-    });
-    actions.appendChild(reqBtn);
-    actions.appendChild(notNow);
-    c.appendChild(actions);
-    return c;
-  }
 
   function secondaryLinks() {
     const wrap = el(`<p class="guide-secondary"></p>`);
@@ -312,4 +277,78 @@ export async function renderHome(root, ctx) {
     wrap.appendChild(el(`<a href="#/circles">Your circles</a>`));
     return wrap;
   }
+}
+
+/** A proposal card. briefId (optional) is passed through to the staged
+ *  request composer so the recipient sees the requester's approved text.
+ *  Exported for reuse by the brief review screen (views/brief.js). */
+export function proposalCard(p, briefId) {
+  const c = card();
+  c.classList.add('proposal-card');
+  const cand = p.candidate || {};
+  const sub = [cand.pronouns, cand.region].filter(Boolean).join(' · ');
+  const head = el(`<div class="person-head"></div>`);
+  head.appendChild(el(`<h3>${esc(cand.name || 'A fellow traveler')}${cand.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}</h3>`));
+  if (sub) head.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
+  c.appendChild(head);
+
+  const typeLabel = p.connectionTypeLabel || p.connectionType;
+  if (typeLabel) {
+    c.appendChild(el(`<p class="request-meta" style="margin-top:0.5rem">${esc(typeLabel)}</p>`));
+  }
+
+  const fits = Array.isArray(p.whyItFits) ? p.whyItFits
+    : typeof p.whyItFits === 'string' && p.whyItFits ? [p.whyItFits] : null;
+  if (fits && fits.length) {
+    c.appendChild(el(`<h4 class="proposal-label">Why this might fit</h4>`));
+    const ul = el(`<ul class="reason-list"></ul>`);
+    for (const r of fits.slice(0, 4)) ul.appendChild(el(`<li>${esc(r)}</li>`));
+    c.appendChild(ul);
+  }
+
+  // The candidate's own approved words — shown only when they consented to share.
+  if (p.candidateSharedText) {
+    c.appendChild(el(`<h4 class="proposal-label">In their own words</h4>`));
+    c.appendChild(el(`<p class="shared-words">${esc(p.candidateSharedText)}</p>`));
+  }
+
+  // Honest reciprocal benefit — never a score, never invented certainty.
+  const serve = Array.isArray(p.forCandidate) ? p.forCandidate.join(' ')
+    : (typeof p.forCandidate === 'string' ? p.forCandidate : '');
+  if (serve) {
+    c.appendChild(el(`<h4 class="proposal-label">Why this might serve them</h4>`));
+    c.appendChild(el(`<p class="about-text">${esc(serve)}</p>`));
+  }
+
+  const first = p.suggestedFirstStep || p.suggestedFirst;
+  if (first) {
+    const callout = el(`<div class="first-step"></div>`);
+    callout.appendChild(el(`<h4>A gentle first step</h4>`));
+    callout.appendChild(el(`<p>${esc(first)}</p>`));
+    c.appendChild(callout);
+  }
+
+  const actions = el(`<div class="match-actions"></div>`);
+  const reqBtn = el(`<button type="button" class="btn btn-primary btn-small">Request introduction</button>`);
+  reqBtn.addEventListener('click', () => {
+    // Hands off to the match detail composer, which carries the full
+    // staged-consent request flow. briefId lets the recipient see the
+    // requester's approved brief text.
+    navigate(`#/discover/match?id=${cand.id}${briefId ? `&briefId=${briefId}` : ''}`);
+  });
+  const notNow = el(`<button type="button" class="btn btn-ghost btn-small">Not now</button>`);
+  notNow.addEventListener('click', () => {
+    c.remove();
+    announce('Suggestion dismissed.');
+    toast('Set aside quietly. Nothing was sent.');
+    const remaining = c.closest('.guide-pane')?.querySelectorAll('.proposal-card');
+    if (remaining && !remaining.length) {
+      const again = el(`<p class="guide-secondary">Take your time — <a href="#/">ask again</a> whenever you like, or <a href="#/discover">browse quietly</a>.</p>`);
+      c.closest('.guide-pane').appendChild(again);
+    }
+  });
+  actions.appendChild(reqBtn);
+  actions.appendChild(notNow);
+  c.appendChild(actions);
+  return c;
 }

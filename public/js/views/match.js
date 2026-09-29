@@ -35,6 +35,7 @@ function fillTemplate(text, person) {
 export async function renderMatchDetail(root, ctx) {
   const profileId = get('profileId');
   const targetId = Number(ctx.params.id);
+  const briefId = Number(ctx.params.briefId) || null;
 
   if (!targetId) {
     root.appendChild(emptyState({ title: 'No one selected.', actionLabel: 'Back to Discover', actionHref: '#/discover' }));
@@ -235,6 +236,9 @@ export async function renderMatchDetail(root, ctx) {
   const btnRow = el(`<div class="btn-row"></div>`);
   btnRow.appendChild(sendBtn);
   form.appendChild(btnRow);
+  if (briefId) {
+    form.appendChild(el(`<p class="field-hint">The exact text you approved in your connection brief will be shared with them — nothing else.</p>`));
+  }
 
   wireSubmit(form, sendBtn, async () => {
     formBanner.clear();
@@ -257,6 +261,7 @@ export async function renderMatchDetail(root, ctx) {
         format: formatSelect.value || undefined,
         commitment: commitmentSelect.value || undefined,
         tone: toneSelect.value || undefined,
+        briefId: briefId || undefined,
       });
       toast('Request sent. They can respond in their own time.');
       announce('Request sent.');
