@@ -229,6 +229,47 @@ if (userVersion < 2) {
   db.exec('PRAGMA user_version = 2');
 }
 
+// v3: connection briefs + introduction shared-text snapshots.
+function migrateToV3() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS briefs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER UNIQUE NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      who_text TEXT NOT NULL DEFAULT '',
+      intention_text TEXT NOT NULL DEFAULT '',
+      good_fit_text TEXT NOT NULL DEFAULT '',
+      offer_text TEXT NOT NULL DEFAULT '',
+      logistics_text TEXT NOT NULL DEFAULT '',
+      boundaries_text TEXT NOT NULL DEFAULT '',
+      private_notes TEXT NOT NULL DEFAULT '',
+      shared_text TEXT NOT NULL DEFAULT '',
+      consent_save INTEGER NOT NULL DEFAULT 0,
+      consent_share INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','paused','withdrawn')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  addColumnIfMissing('introductions', 'requester_shared_text', 'TEXT NOT NULL DEFAULT \'\'');
+
+  // Sentinel "SEREN · connector" profile (id 0) so system messages can be
+  // stored with sender_id 0 without tripping the FK on messages.sender_id.
+  // It is excluded from public/candidate listings below.
+  const hasSentinel = db.prepare('SELECT 1 FROM profiles WHERE id = 0').get();
+  if (!hasSentinel) {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO profiles
+        (id, name, email, interests, intention, connection_prefs, consents, is_seed, created_at, updated_at)
+      VALUES (0, 'SEREN · connector', 'system@seren.local', '[]', '', '{}', '{}', 0, ?, ?)
+    `).run(now, now);
+  }
+}
+if (userVersion < 3) {
+  migrateToV3();
+  db.exec('PRAGMA user_version = 3');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -316,8 +357,31 @@ function toIntroduction(row) {
     tone: row.tone || '',
     responderNote: row.responder_note || '',
     responseKind: row.response_kind || '',
+    requesterSharedText: row.requester_shared_text || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+/** Connection-brief wire object (snake_case per the brief API contract). */
+function toBrief(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    profile_id: row.profile_id,
+    who_text: row.who_text || '',
+    intention_text: row.intention_text || '',
+    good_fit_text: row.good_fit_text || '',
+    offer_text: row.offer_text || '',
+    logistics_text: row.logistics_text || '',
+    boundaries_text: row.boundaries_text || '',
+    private_notes: row.private_notes || '',
+    shared_text: row.shared_text || '',
+    consent_save: row.consent_save === 1,
+    consent_share: row.consent_share === 1,
+    status: row.status,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }
 
@@ -355,7 +419,7 @@ export function getProfileByEmail(email) {
 }
 
 export function listPublicProfiles() {
-  const rows = db.prepare('SELECT * FROM profiles ORDER BY id ASC').all();
+  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 ORDER BY id ASC').all();
   return rows.map((r) => {
     const p = toProfile(r);
     return {
@@ -370,7 +434,7 @@ export function listPublicProfiles() {
 
 /** Full profiles, for matching candidates (includes consents + intention). */
 export function listCandidateProfiles() {
-  const rows = db.prepare('SELECT * FROM profiles ORDER BY id ASC').all();
+  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 ORDER BY id ASC').all();
   return rows.map(toProfile);
 }
 
@@ -557,14 +621,16 @@ export function getIntroduction(id) {
 }
 
 export function createIntroduction({ requesterId, proposedId, intention, note, score,
-  connectionType = '', requestMessage = '', format = '', commitment = '', tone = '' }) {
+  connectionType = '', requestMessage = '', format = '', commitment = '', tone = '',
+  requesterSharedText = '' }) {
   const now = new Date().toISOString();
   const stmt = db.prepare(`
     INSERT INTO introductions
       (requester_id, proposed_id, intention, note, score, status,
        connection_type, request_message, format, commitment, tone,
+       requester_shared_text,
        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     requesterId,
@@ -578,6 +644,7 @@ export function createIntroduction({ requesterId, proposedId, intention, note, s
     format,
     commitment,
     tone,
+    (requesterSharedText || '').trim(),
     now,
     now,
   );
@@ -733,6 +800,81 @@ export function updateGuideSession(id, { answers, status }) {
   db.prepare('UPDATE guide_sessions SET answers_json = ?, status = ? WHERE id = ?')
     .run(JSON.stringify(next.answers), next.status, id);
   return getGuideSession(id);
+}
+
+// ---------- connection briefs ----------
+
+const BRIEF_FIELDS = [
+  'who_text', 'intention_text', 'good_fit_text', 'offer_text',
+  'logistics_text', 'boundaries_text', 'private_notes', 'shared_text',
+];
+
+const getBriefByIdStmt = db.prepare('SELECT * FROM briefs WHERE id = ?');
+export function getBrief(id) {
+  return toBrief(getBriefByIdStmt.get(id));
+}
+
+const getBriefByProfileStmt = db.prepare('SELECT * FROM briefs WHERE profile_id = ?');
+export function getBriefByProfile(profileId) {
+  return toBrief(getBriefByProfileStmt.get(profileId));
+}
+
+/** Create or replace the profile's draft brief from generated draft fields. */
+export function upsertDraftBrief(profileId, draft) {
+  const now = new Date().toISOString();
+  const existing = getBriefByProfile(profileId);
+  const cols = BRIEF_FIELDS.map((f) => String(draft[f] ?? '').trim());
+  if (existing) {
+    db.prepare(`
+      UPDATE briefs
+      SET ${BRIEF_FIELDS.map((f) => `${f} = ?`).join(', ')},
+          consent_save = 0, consent_share = 0, status = 'draft', updated_at = ?
+      WHERE id = ?
+    `).run(...cols, now, existing.id);
+    return getBrief(existing.id);
+  }
+  const result = db.prepare(`
+    INSERT INTO briefs
+      (profile_id, ${BRIEF_FIELDS.join(', ')}, consent_save, consent_share, status, created_at, updated_at)
+    VALUES (?, ${BRIEF_FIELDS.map(() => '?').join(', ')}, 0, 0, 'draft', ?, ?)
+  `).run(profileId, ...cols, now, now);
+  return getBrief(Number(result.lastInsertRowid));
+}
+
+/** Owner edits to a draft/active brief. Returns the updated brief or null. */
+export function updateBrief(id, fields) {
+  const existing = getBrief(id);
+  if (!existing) return null;
+  const sets = [];
+  const params = [];
+  for (const f of BRIEF_FIELDS) {
+    if (fields[f] !== undefined) {
+      if (typeof fields[f] !== 'string') return null;
+      sets.push(`${f} = ?`);
+      params.push(fields[f].trim());
+    }
+  }
+  if (sets.length === 0) return existing;
+  sets.push('updated_at = ?');
+  params.push(new Date().toISOString());
+  db.prepare(`UPDATE briefs SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+  return getBrief(id);
+}
+
+/** Approve a brief: sets it active with explicit consent flags. */
+export function approveBrief(id, { sharedText, consentShare }) {
+  db.prepare(`
+    UPDATE briefs
+    SET shared_text = ?, consent_save = 1, consent_share = ?, status = 'active', updated_at = ?
+    WHERE id = ?
+  `).run(sharedText.trim(), consentShare ? 1 : 0, new Date().toISOString(), id);
+  return getBrief(id);
+}
+
+export function setBriefStatus(id, status) {
+  db.prepare('UPDATE briefs SET status = ?, updated_at = ? WHERE id = ?')
+    .run(status, new Date().toISOString(), id);
+  return getBrief(id);
 }
 
 // ---------- messages ----------
@@ -1001,7 +1143,8 @@ const SEED_MEMBERS = [
 ];
 
 function profileCount() {
-  return db.prepare('SELECT COUNT(*) AS c FROM profiles').get().c;
+  // The id-0 SEREN connector sentinel is not a member.
+  return db.prepare('SELECT COUNT(*) AS c FROM profiles WHERE id > 0').get().c;
 }
 
 function seedProfileCount() {

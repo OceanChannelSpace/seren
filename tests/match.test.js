@@ -202,3 +202,44 @@ test('buildIntroNote handles a missing intention gracefully', () => {
   assert.match(note, /^You and Kai Sun share 1 spiritual interest \(yoga\)\./);
   assert.match(note, /Aria, may this connection serve your path\./);
 });
+
+// ---------- findMatches: introductions-consent gate ----------
+
+test('findMatches excludes candidates who have not opted into introductions', async () => {
+  const { findMatches } = await import('../src/match.js');
+  const requester = profile(1, { interests: ['meditation'], intention: 'daily meditation partner wanted' });
+  const yes = profile(2, { interests: ['meditation'], intention: 'daily meditation partner wanted' });
+  const no = profile(3, { interests: ['meditation'], intention: 'daily meditation partner wanted' });
+  no.consents = { introductions: false, community_visible: true, ai_matching: true };
+  const matches = findMatches(requester, [yes, no], { intentionText: 'meditation partner' });
+  assert.deepEqual(matches.map((m) => m.candidate.id), [2]);
+});
+
+// ---------- buildPairReasons ----------
+
+test('buildPairReasons: forRequester keeps scored reasons; forCandidate names a concrete link', async () => {
+  const { buildPairReasons } = await import('../src/match.js');
+  const requester = profile(1, {
+    intention: 'I want to support someone moving through grief with steady presence.',
+  });
+  const candidate = profile(2, {
+    intention: 'I am moving through grief and looking for gentle company.',
+    practices: ['meditation'],
+  });
+  const scored = { reasons: ['You both care about Meditation.'] };
+  const { forRequester, forCandidate } = buildPairReasons(
+    requester, candidate, scored, 'I can offer a calm listening space around grief each week.',
+  );
+  assert.deepEqual(forRequester, ['You both care about Meditation.']);
+  assert.ok(forCandidate.includes('grief'), `concrete link named: ${forCandidate}`);
+  assert.ok(!/mutual interest|shared history|perfect match/i.test(forCandidate));
+});
+
+test('buildPairReasons: honest fallback when no concrete link can be derived', async () => {
+  const { buildPairReasons, PAIR_REASON_FALLBACK } = await import('../src/match.js');
+  const requester = profile(1, { intention: 'I want to talk about ocean swimming.' });
+  const candidate = profile(2, { intention: 'I am studying ancient philosophy texts.' });
+  const { forCandidate } = buildPairReasons(requester, candidate, { reasons: [] }, 'I can offer swim tips.');
+  assert.equal(forCandidate, PAIR_REASON_FALLBACK);
+  assert.ok(!/definitely|perfect|soulmate|meant to/i.test(forCandidate));
+});

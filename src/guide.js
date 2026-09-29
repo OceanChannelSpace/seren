@@ -12,7 +12,7 @@ import {
   CONNECTION_TYPE_MAP,
   EXPLORE_TOPICS,
 } from './constants.js';
-import { findMatches } from './match.js';
+import { findMatches, buildPairReasons } from './match.js';
 
 const PRACTICE_VALUES = new Set(PRACTICES.map((p) => p.value));
 const INTENTION_VALUES = new Set(INTENTIONS.map((i) => i.value));
@@ -188,6 +188,25 @@ function optionList(pairs) {
 }
 
 const QUESTION_DEFS = {
+  // Free-text questions — never inferable, always asked (until answered/skipped).
+  offer: {
+    id: 'offer',
+    prompt: 'What could you offer the other person — listening, experience, a practice, collaboration?',
+    type: 'free',
+    skippable: true,
+  },
+  mutual: {
+    id: 'mutual',
+    prompt: 'What would make this meeting worthwhile for both of you?',
+    type: 'free',
+    skippable: true,
+  },
+  boundaries: {
+    id: 'boundaries',
+    prompt: "Anything you'd like SEREN to keep private or handle gently?",
+    type: 'free',
+    skippable: true,
+  },
   format: {
     id: 'format',
     prompt: 'How would you like to connect at first?',
@@ -213,6 +232,12 @@ const QUESTION_DEFS = {
     skippable: true,
     options: () => optionList(COMMITMENT_LEVELS.map((c) => [c, COMMITMENT_LABELS[c]])),
   },
+  timing: {
+    id: 'timing',
+    prompt: 'Any timing or availability SEREN should respect?',
+    type: 'free',
+    skippable: true,
+  },
   depth: {
     id: 'depth',
     prompt: 'What matters most in a connection right now? (pick up to 3)',
@@ -229,39 +254,48 @@ export function getQuestionDef(id) {
 
 /**
  * Choose follow-up questions for a guide session.
- * Skips anything already inferable from the parsed intent or the profile.
+ * Free-text questions (offer, mutual, boundaries, timing) are never inferable
+ * and are always asked until answered or skipped. format / locality /
+ * commitment keep the existing inference skips from the parsed intent or the
+ * profile. Priority order: offer, mutual, boundaries, format, locality,
+ * commitment, timing, depth. Max 3 total.
  * @param {object} parsed parseIntent output
  * @param {object} profile camelCase profile (may be null)
  * @returns {Array} up to 3 question objects
  */
 export function selectFollowUps(parsed, profile = null) {
-  const questions = [];
   const p = parsed || {};
   const prefs = profile?.prefs || {};
   const profileFormats = Array.isArray(prefs.formats) ? prefs.formats : [];
   const profileLocalRemote = prefs.localRemote || 'either';
   const profileValues = Array.isArray(profile?.values) ? profile.values : [];
 
+  const want = [];
+  // Free text is never inferable.
+  want.push(QUESTION_DEFS.offer);
+  want.push(QUESTION_DEFS.mutual);
+  want.push(QUESTION_DEFS.boundaries);
   if (!p.formatHint && profileFormats.length === 0) {
-    questions.push(QUESTION_DEFS.format);
+    want.push(QUESTION_DEFS.format);
   }
   if (!p.localityHint && (!profileLocalRemote || profileLocalRemote === 'either')) {
-    questions.push(QUESTION_DEFS.locality);
+    want.push(QUESTION_DEFS.locality);
   }
   if (!p.commitmentHint) {
-    questions.push(QUESTION_DEFS.commitment);
+    want.push(QUESTION_DEFS.commitment);
   }
+  want.push(QUESTION_DEFS.timing);
   if (profileValues.length === 0) {
-    questions.push(QUESTION_DEFS.depth);
+    want.push(QUESTION_DEFS.depth);
   }
 
-  return questions.slice(0, 3).map((q) => ({
+  return want.slice(0, 3).map((q) => ({
     id: q.id,
     prompt: q.prompt,
     type: q.type,
     skippable: q.skippable,
     ...(q.max ? { max: q.max } : {}),
-    options: q.options(),
+    ...(q.type === 'free' ? {} : { options: q.options() }),
   }));
 }
 
@@ -292,7 +326,22 @@ export function answerQuestion(session, questionId, value) {
     return answers;
   }
 
-  const allowed = def.options().map((o) => o.value);
+  const allowed = def.type === 'free' ? null : def.options().map((o) => o.value);
+  if (def.type === 'free') {
+    if (typeof value !== 'string') {
+      throw err(`"${questionId}" must be a string (or empty to skip)`);
+    }
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      answers[questionId] = null; // empty = skip
+      return answers;
+    }
+    if (trimmed.length > 500) {
+      throw err(`"${questionId}" must be at most 500 characters`);
+    }
+    answers[questionId] = trimmed;
+    return answers;
+  }
   if (def.type === 'single') {
     if (typeof value !== 'string' || !allowed.includes(value)) {
       throw err(`"${value}" is not a valid option for "${questionId}"`);
@@ -374,7 +423,7 @@ export function suggestedFirstStep(connectionType, sharedPractices = []) {
   return base;
 }
 
-function chooseConnectionType(parsed, sharedPractices) {
+export function chooseConnectionType(parsed, sharedPractices) {
   const p = parsed || {};
   for (const t of p.connectionTypes || []) {
     if (CONNECTION_TYPE_MAP[t]) return t;
@@ -439,6 +488,8 @@ export function buildProposals(profile, parsed, answers = {}, deps = {}) {
   return matches.map((m) => {
     const connectionType = chooseConnectionType(parsed, m.sharedPractices);
     const typeMeta = CONNECTION_TYPE_MAP[connectionType];
+    const { forCandidate } = buildPairReasons(profile, m.candidate, m, deps.requesterOffer || '');
+    const first = suggestedFirstStep(connectionType, m.sharedPractices);
     return {
       candidate: visibleProfile
         ? visibleProfile(m.candidate.id, profile.id)
@@ -446,11 +497,121 @@ export function buildProposals(profile, parsed, answers = {}, deps = {}) {
       connectionType,
       connectionTypeLabel: typeMeta ? typeMeta.label : connectionType,
       whyItFits: m.reasons,
+      forCandidate,
+      candidateSharedText: deps.getCandidateSharedText
+        ? deps.getCandidateSharedText(m.candidate.id)
+        : '',
       sharedPractices: m.sharedPractices,
       sharedIntentions: m.sharedIntentions,
-      suggestedFirst: suggestedFirstStep(connectionType, m.sharedPractices),
+      suggestedFirst: first,
+      suggestedFirstStep: first,
     };
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Connection brief — prefilled draft from a completed guide session.  */
+/* ------------------------------------------------------------------ */
+
+function truncate(text, max = 140) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  return t.length > max ? t.slice(0, max).trimEnd() + '…' : t;
+}
+
+function practiceWords(practices) {
+  return (practices || [])
+    .map((p) => PRACTICE_LABELS.get(p))
+    .filter(Boolean)
+    .map((l) => l.toLowerCase());
+}
+
+/**
+ * Prefill a connection-brief draft from a completed guide session.
+ * Every field is the user's own words or a plain restatement of the parsed
+ * intent — nothing is invented. The user reviews and edits before approving.
+ * @param {object} profile camelCase profile
+ * @param {object} session { requestText, parsed, answers }
+ * @returns {object} snake_case draft fields
+ */
+export function buildBriefDraft(profile, session) {
+  const s = session || {};
+  const parsed = s.parsed || {};
+  const answers = s.answers || {};
+  const name = String(profile?.name || 'A seeker').trim();
+  const firstName = name.split(/\s+/)[0] || 'A seeker';
+  const practiceList = practiceWords(parsed.practices?.length ? parsed.practices : profile?.practices);
+
+  const who_text = practiceList.length
+    ? `${name} — ${practiceList.slice(0, 4).join(', ')}`
+    : name;
+
+  const intention_text = String(s.requestText || '').trim();
+
+  const typeValue = chooseConnectionType(parsed, parsed.practices || []);
+  const typeLabel = (CONNECTION_TYPE_MAP[typeValue]?.label || 'one-to-one conversation').toLowerCase();
+  const hints = practiceList.slice(0, 3);
+  const good_fit_text = hints.length
+    ? `A ${typeLabel} around ${hints.join(' and ')} — someone open to a thoughtful, mutual exchange.`
+    : `A ${typeLabel} — someone open to a thoughtful, mutual exchange.`;
+
+  const offer_text = String(answers.offer || '').trim();
+
+  const logisticsBits = [];
+  const formatLabel = FORMAT_LABELS[answers.format];
+  if (formatLabel) logisticsBits.push(`open to ${formatLabel.toLowerCase()}`);
+  if (answers.locality === 'local') logisticsBits.push('prefers meeting nearby');
+  else if (answers.locality === 'remote') logisticsBits.push('happy to connect online from anywhere');
+  else if (answers.locality === 'either') logisticsBits.push('open to nearby or online');
+  const commitmentLabel = COMMITMENT_LABELS[answers.commitment];
+  if (commitmentLabel) logisticsBits.push(commitmentLabel.toLowerCase());
+  if (answers.timing && String(answers.timing).trim()) {
+    logisticsBits.push(`timing: ${String(answers.timing).trim()}`);
+  }
+  const logistics_text = logisticsBits.join('; ');
+
+  const boundaries_text = String(answers.boundaries || '').trim();
+
+  const sharedParts = [];
+  if (intention_text) sharedParts.push(`${firstName} is hoping to find: ${truncate(intention_text, 180)}`);
+  if (offer_text) sharedParts.push(`${firstName} can offer: ${truncate(offer_text, 160)}`);
+  const shared_text = truncate(
+    sharedParts.join(' ') || `${firstName} is open to a meaningful new connection.`,
+    400,
+  );
+
+  return {
+    who_text: truncate(who_text, 200),
+    intention_text: truncate(intention_text, 2000),
+    good_fit_text: truncate(good_fit_text, 2000),
+    offer_text: truncate(offer_text, 2000),
+    logistics_text: truncate(logistics_text, 2000),
+    boundaries_text: truncate(boundaries_text, 2000),
+    private_notes: '',
+    shared_text,
+  };
+}
+
+/**
+ * Deterministic warm-intro message posted by SEREN (senderId 0) when a
+ * recipient accepts an introduction. Uses only names, each side's approved
+ * shared_text, and a gentle first step — never invented history or certainty.
+ */
+export function buildWarmIntroMessage({
+  requesterName, responderName, requesterSharedText = '',
+  responderSharedText = '', connectionType = '',
+} = {}) {
+  const first = (n) => String(n || 'a friend').trim().split(/\s+/)[0] || 'a friend';
+  const a = first(requesterName);
+  const b = first(responderName);
+  const lines = [
+    `A warm hello from SEREN: ${a} and ${b} have both said yes to this introduction.`,
+  ];
+  const reqShared = String(requesterSharedText || '').trim();
+  const respShared = String(responderSharedText || '').trim();
+  if (reqShared) lines.push(`${a} shared: “${truncate(reqShared, 140)}”`);
+  if (respShared) lines.push(`${b} shared: “${truncate(respShared, 140)}”`);
+  lines.push(`A gentle first step: ${suggestedFirstStep(connectionType || 'one-to-one-conversation')}`);
+  return lines.join('\n\n');
 }
 
 /* ------------------------------------------------------------------ */

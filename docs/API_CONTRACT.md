@@ -131,3 +131,75 @@ Labeled "demo seed" in UI. Seeded once at first DB creation
 
 `PORT` (default 3000), `DB_PATH` (default `./data/seren.db`), `SEED_DEMO`
 (default `true`). Documented in `.env.example`. No secrets exist.
+
+---
+
+## Addendum — v3: consent-first connection briefs (2026-09-29)
+
+The guided superconnector flow sits on top of the above. Guide session
+endpoints keep their shapes; the completion response now returns
+`proposals: []` until the requester has an active, consent-saved brief
+(consent-first: proposals are unlocked by `GET /api/guide/proposals` after
+brief approval).
+
+### Schema v3 (`PRAGMA user_version = 3`)
+
+New `briefs` table: `id`, `profile_id` UNIQUE, `who_text`, `intention_text`,
+`good_fit_text`, `offer_text`, `logistics_text`, `boundaries_text`,
+`shared_text`, `consent_save` (0/1), `consent_share` (0/1),
+`status` (`draft`|`active`|`paused`|`withdrawn`), `created_at`, `updated_at`.
+All text fields ≤ 2000 chars.
+
+`introductions` gains `requester_shared_text` TEXT (snapshot of the
+requester's approved shareable text at request time; empty when no brief
+was attached).
+
+A sentinel profile `id = 0` ("SEREN · connector") exists so the warm-intro
+system messages (`messages.sender_id = 0`) satisfy the FK. It is excluded
+from all listings, discovery, and member counts.
+
+### Brief lifecycle
+
+- `POST /api/briefs` `{profileId, sessionId}` → 201/200 (replace resets to
+  draft, clears consent). 404 if the session is missing, foreign, or not
+  complete.
+- `GET /api/briefs/mine?profileId=` → `{brief}` or `{brief:null}`.
+- `PATCH /api/briefs/:id` — owner only; draft/active editable (active stays
+  active); paused/withdrawn → 409.
+- `POST /api/briefs/:id/approve` `{profileId, shared_text, consent_save,
+  consent_share}` → active. Requires `consent_save === true` and
+  `shared_text` trimmed 1–600 chars; 400 otherwise; 403 non-owner; 409 if
+  withdrawn.
+- `POST /api/briefs/:id/pause` → paused; `POST .../resume` → active if it
+  was approved (else draft); withdrawn can never be resumed (409).
+- `POST /api/briefs/:id/withdraw` → withdrawn.
+- Ownership failures → 403 `forbidden`; missing → 404 `not_found`.
+
+### Gated proposals
+
+`GET /api/guide/proposals?profileId=&sessionId=` → 403 `consent_required`
+unless the requester has an active brief with `consent_save = 1`.
+Success: `{proposals: [...]}` (≤ 3), each proposal:
+`{candidate, connectionType, connectionTypeLabel, whyItFits[], forCandidate,
+suggestedFirstStep, suggestedFirst (legacy alias), candidateSharedText}`
+— `candidateSharedText` only from the candidate's active, share-approved
+brief, else `''`. Matching hard-gates candidates on
+`consents.introductions === true` plus all pre-existing gates.
+
+### Connections with brief
+
+`POST /api/connections/request` accepts optional `briefId` (positive int).
+If present: 403 `brief_invalid` unless it belongs to the requester, is
+`active`, and has `consent_share = 1`. The approved `shared_text` is
+snapshotted onto the introduction; the list view exposes it as
+`requesterSharedText` only. `private_notes` never leave the server.
+
+### Warm introduction
+
+On `respond` `accepted` / `accepted_with_boundary`, SEREN (sender id 0)
+posts one deterministic message: first names + each side's approved
+`shared_text` (requester: snapshot, falling back to their active
+share-approved brief; responder: their active share-approved brief),
+truncated ~140 chars each, + a gentle first step derived only from the
+connection type. No invented facts, no certainty language. Declines post
+no message.

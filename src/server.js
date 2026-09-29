@@ -16,11 +16,12 @@ import {
   validateRespond, validateCircleInput, validateCircleJoin,
   validateMessageInput, validateReportInput, validatePlanInput,
   validateGuideStart, validateGuideAnswer,
+  validateBriefDraft, validateBriefUpdate, validateBriefApprove,
 } from './validate.js';
 import { findBestMatch, buildIntroNote, findMatches } from './match.js';
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
-  remainingQuestions, getQuestionDef,
+  remainingQuestions, getQuestionDef, buildBriefDraft, buildWarmIntroMessage,
 } from './guide.js';
 import {
   db,
@@ -66,6 +67,12 @@ import {
   createGuideSession,
   getGuideSession,
   updateGuideSession,
+  getBrief,
+  getBriefByProfile,
+  upsertDraftBrief,
+  updateBrief,
+  approveBrief,
+  setBriefStatus,
 } from './db.js';
 
 export const app = express();
@@ -177,6 +184,7 @@ function toWireIntroduction(intro) {
     tone: intro.tone,
     responderNote: intro.responderNote,
     responseKind: intro.responseKind,
+    requesterSharedText: intro.requesterSharedText || '',
     createdAt: intro.createdAt,
     updatedAt: intro.updatedAt,
   };
@@ -497,6 +505,19 @@ app.post('/api/connections/request', (req, res) => {
       'There is already an active connection request between you two.');
   }
 
+  // Optional connection brief: must belong to the requester, be active, and
+  // be approved for sharing. Its approved shared_text is snapshotted onto the
+  // introduction so the recipient sees exactly what was approved.
+  let requesterSharedText = '';
+  if (req.body.briefId !== undefined && req.body.briefId !== null) {
+    const brief = getBrief(parseId(req.body.briefId));
+    if (!brief || brief.profile_id !== requester.id || brief.status !== 'active' || !brief.consent_share) {
+      return err(res, 403, ERROR_CODES.FORBIDDEN,
+        'The selected brief is not available for sharing.');
+    }
+    requesterSharedText = brief.shared_text || '';
+  }
+
   const intro = createIntroduction({
     requesterId: requester.id,
     proposedId: target.id,
@@ -508,6 +529,7 @@ app.post('/api/connections/request', (req, res) => {
     format: req.body.format || '',
     commitment: req.body.commitment || '',
     tone: req.body.tone || '',
+    requesterSharedText,
   });
 
   return res.status(201).json({ introduction: toWireIntroduction(intro) });
@@ -566,6 +588,32 @@ app.post('/api/introductions/:id/respond', (req, res) => {
     responseKind: req.body.response,
     responderNote: (req.body.note || '').trim(),
   });
+
+  // On acceptance, SEREN posts a warm-intro system message into the thread.
+  // Deterministic template: names + each side's approved shared_text only.
+  if (targetStatus === 'accepted' || targetStatus === 'accepted_with_boundary') {
+    const requester = getProfile(intro.requesterId);
+    const requesterBrief = getBriefByProfile(intro.requesterId);
+    const requesterShared = updated.requesterSharedText
+      || ((requesterBrief && requesterBrief.status === 'active' && requesterBrief.consent_share)
+        ? requesterBrief.shared_text : '');
+    const responderBrief = getBriefByProfile(profile.id);
+    const responderShared = (responderBrief && responderBrief.status === 'active' && responderBrief.consent_share)
+      ? responderBrief.shared_text
+      : '';
+    createMessage({
+      introductionId: intro.id,
+      senderId: 0,
+      body: buildWarmIntroMessage({
+        requesterName: requester?.name,
+        responderName: profile.name,
+        requesterSharedText: requesterShared,
+        responderSharedText: responderShared,
+        connectionType: updated.connectionType || '',
+      }),
+    });
+  }
+
   res.json(toWireIntroduction(updated));
 });
 
@@ -862,12 +910,21 @@ function guideProposals(profile, session) {
     db.prepare('SELECT blocked_id AS id FROM blocks WHERE blocker_id = ? UNION SELECT blocker_id AS id FROM blocks WHERE blocked_id = ?')
       .all(profile.id, profile.id).map((r) => r.id),
   );
+  const myBrief = getBriefByProfile(profile.id);
   return buildProposals(profile, parsed, session.answers, {
     candidates: listCandidateProfiles(),
     blockedIds,
     passedIds: new Set(passed),
     existingPairKeys: getNonWithdrawnPairKeys(),
     visibleProfile: (id, viewerId) => getVisibleProfile(id, viewerId),
+    // Bilateral reasons: the requester's stated offer grounds the
+    // candidate-side reason; candidate shared text comes only from their
+    // active, share-approved brief.
+    requesterOffer: (myBrief && myBrief.offer_text) || session.answers.offer || '',
+    getCandidateSharedText: (candidateId) => {
+      const b = getBriefByProfile(candidateId);
+      return (b && b.status === 'active' && b.consent_share) ? b.shared_text : '';
+    },
   });
 }
 
@@ -915,7 +972,12 @@ app.post('/api/guide/sessions/:id/answer', (req, res) => {
   const remaining = remainingQuestions({ answers, questions: view.questions });
   if (remaining.length === 0) {
     const done = updateGuideSession(session.id, { status: 'complete' });
-    const proposals = guideProposals(profile, done);
+    // Consent-first: proposals only unlock after the requester has an active,
+    // consent-saved connection brief. Before approval the array stays empty
+    // (the dedicated GET /api/guide/proposals enforces the same gate).
+    const brief = getBriefByProfile(profile.id);
+    const briefActive = !!(brief && brief.status === 'active' && brief.consent_save);
+    const proposals = briefActive ? guideProposals(profile, done) : [];
     return res.json({
       complete: true,
       session: guideSessionView(done, profile),
@@ -935,6 +997,127 @@ app.get('/api/guide/sessions/:id', (req, res) => {
     return err(res, 403, ERROR_CODES.FORBIDDEN, 'This guide session belongs to another profile.');
   }
   res.json({ session: guideSessionView(session, profile) });
+});
+
+// --- connection briefs (consent-first, one per profile) ---
+
+function requireBrief(req, res) {
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+  const brief = getBrief(parseId(req.params.id));
+  if (!brief) {
+    err(res, 404, ERROR_CODES.NOT_FOUND, 'Brief not found.');
+    return null;
+  }
+  if (brief.profile_id !== profile.id) {
+    err(res, 403, ERROR_CODES.FORBIDDEN, 'This brief belongs to another profile.');
+    return null;
+  }
+  return { profile, brief };
+}
+
+/** Create (or replace) the profile's draft brief from a completed guide session. */
+app.post('/api/briefs', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const sessionId = parseId(req.body?.sessionId);
+  const session = sessionId === null ? null : getGuideSession(sessionId);
+  if (!session || session.profileId !== profile.id || session.status !== 'complete') {
+    return err(res, 404, ERROR_CODES.NOT_FOUND,
+      'Guide session not found, not yours, or not complete.');
+  }
+  const { ok, errors } = validateBriefDraft(buildBriefDraft(profile, session));
+  if (!ok) return validationErr(res, errors); // defensive: drafts are server-generated
+  const replaced = !!getBriefByProfile(profile.id);
+  const brief = upsertDraftBrief(profile.id, buildBriefDraft(profile, session));
+  res.status(replaced ? 200 : 201).json({ brief });
+});
+
+app.get('/api/briefs/mine', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  res.json({ brief: getBriefByProfile(profile.id) });
+});
+
+app.patch('/api/briefs/:id', (req, res) => {
+  const found = requireBrief(req, res);
+  if (!found) return;
+  const { brief } = found;
+  if (brief.status !== 'draft' && brief.status !== 'active') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      `A ${brief.status} brief cannot be edited. Resume it first.`);
+  }
+  const { ok, errors } = validateBriefUpdate(req.body);
+  if (!ok) return validationErr(res, errors);
+  // Editing an active brief keeps it active.
+  res.json({ brief: updateBrief(brief.id, req.body) });
+});
+
+app.post('/api/briefs/:id/approve', (req, res) => {
+  const found = requireBrief(req, res);
+  if (!found) return;
+  const { brief } = found;
+  if (brief.status === 'withdrawn') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'A withdrawn brief cannot be approved.');
+  }
+  const { ok, errors } = validateBriefApprove(req.body);
+  if (!ok) return validationErr(res, errors);
+  res.json({
+    brief: approveBrief(brief.id, {
+      sharedText: req.body.shared_text,
+      consentShare: req.body.consent_share === true,
+    }),
+  });
+});
+
+function briefStatusTransition(to, fromStatuses, conflictMessage) {
+  return (req, res) => {
+    const found = requireBrief(req, res);
+    if (!found) return;
+    const { brief } = found;
+    if (brief.status === to) return res.json({ brief });
+    if (!fromStatuses.includes(brief.status)) {
+      return err(res, 409, ERROR_CODES.CONFLICT_STATE, conflictMessage);
+    }
+    let next = to;
+    if (to === 'resume-target') {
+      // resume: back to active only when the brief was approved for saving.
+      next = brief.consent_save ? 'active' : 'draft';
+    }
+    res.json({ brief: setBriefStatus(brief.id, next) });
+  };
+}
+
+app.post('/api/briefs/:id/pause',
+  briefStatusTransition('paused', ['draft', 'active'],
+    'Only a draft or active brief can be paused.'));
+app.post('/api/briefs/:id/resume',
+  briefStatusTransition('resume-target', ['paused'],
+    'Only a paused brief can be resumed.'));
+app.post('/api/briefs/:id/withdraw',
+  briefStatusTransition('withdrawn', ['draft', 'active', 'paused'],
+    'This brief is already withdrawn.'));
+
+/**
+ * Bilateral proposals for a completed guide session. Gated: the profile must
+ * hold an ACTIVE brief with consent_save, otherwise 403 — proposals are only
+ * computed for people who have opted into being matched right now.
+ */
+app.get('/api/guide/proposals', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const sessionId = parseId(req.query.sessionId);
+  const session = sessionId === null ? null : getGuideSession(sessionId);
+  if (!session || session.profileId !== profile.id) {
+    return err(res, 404, ERROR_CODES.NOT_FOUND, 'Guide session not found.');
+  }
+  const brief = getBriefByProfile(profile.id);
+  if (!brief || brief.status !== 'active' || !brief.consent_save) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'An active connection brief with saved consent is required to see proposals.');
+  }
+  res.json({ proposals: guideProposals(profile, session) });
 });
 
 // ---------- static frontend ----------

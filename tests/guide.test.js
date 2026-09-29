@@ -144,10 +144,22 @@ test('selectFollowUps: never returns more than 3 questions', () => {
   assert.ok(qs.length <= 3, `got ${qs.length}`);
   assert.ok(qs.length > 0);
   for (const q of qs) {
-    assert.ok(['format', 'locality', 'commitment', 'depth'].includes(q.id));
+    assert.ok(['offer', 'mutual', 'boundaries', 'format', 'locality', 'commitment', 'timing', 'depth'].includes(q.id));
     assert.equal(q.skippable, true);
-    assert.ok(Array.isArray(q.options) && q.options.length > 0);
+    if (q.type === 'free') {
+      assert.ok(!('options' in q), 'free-text questions carry no options');
+    } else {
+      assert.ok(Array.isArray(q.options) && q.options.length > 0);
+    }
   }
+});
+
+test('selectFollowUps: free-text questions lead the priority order', () => {
+  const parsed = parseIntent('I am curious and open.');
+  const profile = { prefs: { formats: [], localRemote: 'either' }, values: [] };
+  const qs = selectFollowUps(parsed, profile);
+  assert.deepEqual(qs.map((q) => q.id), ['offer', 'mutual', 'boundaries']);
+  assert.ok(qs.every((q) => q.type === 'free'));
 });
 
 test('getQuestionDef: depth is multi with max 3', () => {
@@ -196,6 +208,25 @@ test('answerQuestion: depth accepts up to 3 values, rejects 4', () => {
   );
 });
 
+test('answerQuestion: free-text answers trim, cap at 500, empty skips', () => {
+  const s = openSession([{ id: 'offer' }]);
+  const ok = answerQuestion(s, 'offer', '  I can offer a listening ear.  ');
+  assert.deepEqual(ok, { offer: 'I can offer a listening ear.' });
+  const skipped = answerQuestion(s, 'offer', '   ');
+  assert.deepEqual(skipped, { offer: null });
+  assert.throws(() => answerQuestion(s, 'offer', 'x'.repeat(501)), /at most 500/);
+  assert.throws(() => answerQuestion(s, 'offer', 42), /must be a string/);
+});
+
+test('getQuestionDef: new free-text questions exist and are skippable', () => {
+  for (const id of ['offer', 'mutual', 'boundaries', 'timing']) {
+    const d = getQuestionDef(id);
+    assert.ok(d, id);
+    assert.equal(d.type, 'free');
+    assert.equal(d.skippable, true);
+  }
+});
+
 // ---------- suggestedFirstStep ----------
 
 test('suggestedFirstStep: templates per type, generic fallback', () => {
@@ -212,7 +243,7 @@ test('buildProposals: shape and privacy via visibleProfile', async () => {
     id: 1001, practices: ['meditation'], interests: ['meditation'],
     intention: 'calm meditation partner', intentions: ['meditation-partner'],
     prefs: { formats: ['video'], localRemote: 'either', languages: ['English'] },
-    consents: { community_visible: true }, consentSettings: {},
+    consents: { community_visible: true, introductions: true }, consentSettings: {},
   };
   const candidate = {
     id: 1002, name: 'Candace', email: 'candace@example.com',
@@ -220,12 +251,13 @@ test('buildProposals: shape and privacy via visibleProfile', async () => {
     intention: 'seeking a meditation partner for morning sits',
     intentions: ['meditation-partner'],
     prefs: { formats: ['video'], localRemote: 'either', languages: ['English'] },
-    consents: { community_visible: true }, consentSettings: {},
+    consents: { community_visible: true, introductions: true }, consentSettings: {},
   };
   const parsed = parseIntent('I want a meditation partner for morning sits over video.');
   const proposals = buildProposals(requester, parsed, {}, {
     candidates: [candidate],
     visibleProfile: () => ({ id: candidate.id, name: 'Candace' }),
+    requesterOffer: 'I can offer a steady morning sitting practice.',
   });
   assert.equal(proposals.length, 1);
   const [p] = proposals;
@@ -233,7 +265,29 @@ test('buildProposals: shape and privacy via visibleProfile', async () => {
   assert.equal(p.connectionTypeLabel, 'Meditation or contemplative partner');
   assert.ok(Array.isArray(p.whyItFits) && p.whyItFits.length > 0);
   assert.ok(p.suggestedFirst.length > 20);
+  assert.equal(p.suggestedFirstStep, p.suggestedFirst);
+  assert.ok(typeof p.forCandidate === 'string' && p.forCandidate.length > 0);
+  assert.ok(p.forCandidate.includes('meditation'), 'concrete link to candidate intent is named');
+  assert.equal(p.candidateSharedText, '');
   assert.ok(!('email' in p.candidate), 'candidate must not leak email');
+});
+
+test('buildProposals: candidate without introductions consent is excluded', () => {
+  const requester = {
+    id: 1001, practices: ['meditation'], interests: ['meditation'],
+    intention: 'calm meditation partner', intentions: ['meditation-partner'],
+    prefs: { formats: ['video'], localRemote: 'either', languages: ['English'] },
+    consents: { community_visible: true, introductions: true }, consentSettings: {},
+  };
+  const candidate = {
+    id: 1002, name: 'NoConsent', practices: ['meditation'], interests: ['meditation'],
+    intention: 'seeking a meditation partner for morning sits', intentions: ['meditation-partner'],
+    prefs: { formats: ['video'], localRemote: 'either', languages: ['English'] },
+    consents: { community_visible: true, introductions: false }, consentSettings: {},
+  };
+  const parsed = parseIntent('I want a meditation partner for morning sits.');
+  const proposals = buildProposals(requester, parsed, {}, { candidates: [candidate] });
+  assert.equal(proposals.length, 0);
 });
 
 // ---------- HTTP: session flow ----------
@@ -267,10 +321,12 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
   assert.ok(!s0.questions.some((q) => q.id === 'format'), 'format inferred from "video chat"');
   assert.ok(s0.questions.length <= 3);
 
-  // Answer every open question (use the first option of each).
+  // Answer every open question (free text gets honest words, choices get the first option).
   let last = null;
   for (const q of s0.questions) {
-    const value = q.type === 'multi' ? [q.options[0].value] : q.options[0].value;
+    const value = q.type === 'multi' ? [q.options[0].value]
+      : q.type === 'free' ? `A few honest words about ${q.id}.`
+      : q.options[0].value;
     const r = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
       profileId: me.id, questionId: q.id, value,
     });
@@ -278,9 +334,26 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
     last = r.json;
   }
   assert.equal(last.complete, true, 'session should complete after all questions answered');
+  // Consent-first: completion no longer returns proposals until the brief is approved.
   assert.ok(Array.isArray(last.proposals));
-  assert.ok(last.proposals.length >= 1, 'expected at least one proposal');
-  const prop = last.proposals[0];
+  assert.equal(last.proposals.length, 0, 'no proposals before brief approval');
+
+  // The consent-first path: draft brief → approve → gated proposals unlock.
+  const created = await api('POST', '/api/briefs', { profileId: me.id, sessionId: s0.id });
+  assert.ok([200, 201].includes(created.status), JSON.stringify(created.json));
+  const approved = await api('POST', `/api/briefs/${created.json.brief.id}/approve`, {
+    profileId: me.id,
+    shared_text: 'Seeker is hoping to find a thoughtful dreamwork peer. They offer steady listening.',
+    consent_save: true,
+    consent_share: true,
+  });
+  assert.equal(approved.status, 200);
+  const gated = await api('GET', `/api/guide/proposals?profileId=${me.id}&sessionId=${s0.id}`);
+  assert.equal(gated.status, 200, JSON.stringify(gated.json));
+  const props = gated.json.proposals;
+  assert.ok(props.length >= 1, 'expected at least one proposal after approval');
+  assert.ok(props.length <= 3);
+  const prop = props[0];
   assert.ok(prop.candidate && prop.candidate.id);
   assert.ok(!('email' in prop.candidate), 'proposal candidate must not include email');
   assert.ok(!('consents' in prop.candidate), 'proposal candidate must not include consents');
@@ -288,11 +361,14 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
   assert.ok(typeof prop.connectionTypeLabel === 'string' && prop.connectionTypeLabel.length > 0);
   assert.ok(Array.isArray(prop.whyItFits) && prop.whyItFits.length > 0);
   assert.ok(typeof prop.suggestedFirst === 'string' && prop.suggestedFirst.length > 20);
-  assert.ok(last.proposals.length <= 3);
+  assert.ok(typeof prop.suggestedFirstStep === 'string' && prop.suggestedFirstStep.length > 20);
+  assert.ok(typeof prop.forCandidate === 'string' && prop.forCandidate.length > 0);
+  assert.ok(typeof prop.candidateSharedText === 'string');
+  assert.ok(props.length <= 3);
 
   // Session is complete — further answers rejected.
   const again = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-    profileId: me.id, questionId: s0.questions[0].id, value: s0.questions[0].options[0].value,
+    profileId: me.id, questionId: s0.questions[0].id, value: 'a few more honest words',
   });
   assert.equal(again.status, 409);
 
@@ -333,17 +409,22 @@ test('guide HTTP: bad questionId rejected', async () => {
   assert.ok([400].includes(bad.status), `got ${bad.status}`);
 });
 
-test('guide HTTP: invalid option value rejected', async () => {
+test('guide HTTP: free-text answers cap at 500 chars', async () => {
   const me = await createProfile({ name: 'BadV' });
   const start = await api('POST', '/api/guide/sessions', {
     profileId: me.id, text: 'I want a meditation partner for weekly practice and reflection.',
   });
   const s0 = start.json.session;
-  const q = s0.questions.find((x) => x.id === 'format') || s0.questions[0];
-  const bad = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-    profileId: me.id, questionId: q.id, value: 'telepathy',
+  const free = s0.questions.find((x) => x.type === 'free');
+  assert.ok(free, 'a free-text question should be open');
+  const tooLong = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
+    profileId: me.id, questionId: free.id, value: 'x'.repeat(501),
   });
-  assert.equal(bad.status, 400);
+  assert.equal(tooLong.status, 400);
+  const ok = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
+    profileId: me.id, questionId: free.id, value: 'a few honest words',
+  });
+  assert.equal(ok.status, 200);
 });
 
 test('guide HTTP: wrong profileId is forbidden', async () => {
@@ -379,4 +460,78 @@ test('profile PATCH: values validated and persisted', async () => {
   assert.equal(good.status, 200, JSON.stringify(good.json));
   const got = await api('GET', `/api/profiles/${me.id}?viewerId=${me.id}`);
   assert.deepEqual(got.json.values, ['grounded', 'curious']);
+});
+
+// ---------- buildBriefDraft ----------
+
+test('buildBriefDraft: prefills from session, never invents', async () => {
+  const { buildBriefDraft } = await import('../src/guide.js');
+  const profile = { name: 'Maya Chen', practices: ['meditation', 'dreamwork'] };
+  const session = {
+    requestText: 'I want a meditation partner for quiet morning sits.',
+    parsed: { practices: ['meditation'], intentions: [], connectionTypes: [], requestText: '' },
+    answers: {
+      offer: 'I can offer steady morning presence.',
+      boundaries: 'Please keep my family situation private.',
+      timing: 'Weekday mornings only.',
+      format: 'video',
+      locality: 'remote',
+      commitment: 'recurring',
+    },
+  };
+  const d = buildBriefDraft(profile, session);
+  assert.ok(d.who_text.startsWith('Maya Chen'), d.who_text);
+  assert.ok(d.who_text.includes('meditation'), 'practices named in who_text');
+  assert.equal(d.intention_text, 'I want a meditation partner for quiet morning sits.');
+  assert.ok(d.good_fit_text.includes('meditation'), 'good_fit grounded in parsed intent');
+  assert.ok(!/perfect|soulmate|guaranteed/i.test(d.good_fit_text));
+  assert.equal(d.offer_text, 'I can offer steady morning presence.');
+  assert.ok(d.logistics_text.includes('video') || d.logistics_text.includes('Video'));
+  assert.ok(d.logistics_text.includes('Weekday mornings only.'));
+  assert.equal(d.boundaries_text, 'Please keep my family situation private.');
+  assert.equal(d.private_notes, '');
+  assert.ok(d.shared_text.length > 0 && d.shared_text.length <= 400);
+  assert.ok(d.shared_text.includes('Maya'), 'shared text names who');
+});
+
+test('buildBriefDraft: empty answers give empty optional fields', async () => {
+  const { buildBriefDraft } = await import('../src/guide.js');
+  const d = buildBriefDraft(
+    { name: 'No Answers' },
+    { requestText: 'I am curious and open.', parsed: {}, answers: {} },
+  );
+  assert.equal(d.offer_text, '');
+  assert.equal(d.logistics_text, '');
+  assert.equal(d.boundaries_text, '');
+  assert.ok(d.shared_text.length <= 400);
+});
+
+// ---------- buildWarmIntroMessage ----------
+
+test('buildWarmIntroMessage: names + approved text + first step, nothing invented', async () => {
+  const { buildWarmIntroMessage } = await import('../src/guide.js');
+  const body = buildWarmIntroMessage({
+    requesterName: 'Wendy Wu',
+    responderName: 'Ken Kato',
+    requesterSharedText: 'Wendy is hoping to find a dreamwork peer. She offers deep listening.',
+    responderSharedText: '',
+    connectionType: 'one-to-one-conversation',
+  });
+  assert.ok(body.includes('Wendy') && body.includes('Ken'));
+  assert.ok(body.includes('both said yes'), 'acceptance stated plainly');
+  assert.ok(body.includes('Wendy is hoping to find a dreamwork peer'));
+  assert.ok(!body.includes('Ken shared:'), 'no line invented for the side with no text');
+  assert.ok(body.includes('A gentle first step:'));
+  assert.ok(!/perfect match|soulmate|meant to be|mutual interest/i.test(body));
+});
+
+test('buildWarmIntroMessage: truncates long shared text near 140 chars', async () => {
+  const { buildWarmIntroMessage } = await import('../src/guide.js');
+  const body = buildWarmIntroMessage({
+    requesterName: 'A', responderName: 'B',
+    requesterSharedText: 'x'.repeat(300),
+    connectionType: 'nope',
+  });
+  const line = body.split('\n').find((l) => l.includes('A shared:'));
+  assert.ok(line.length < 170, `truncated: ${line.length}`);
 });

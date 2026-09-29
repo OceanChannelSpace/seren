@@ -183,8 +183,13 @@ test('messaging opens only after mutual acceptance; blocked pairs cannot message
 
   const thread = await api('GET', `/api/introductions/${id}/messages?profileId=${b.id}`);
   assert.equal(thread.status, 200);
-  assert.equal(thread.json.messages.length, 1);
-  assert.equal(thread.json.messages[0].body, 'Hello, grateful to connect.');
+  // SEREN posts a warm-intro system message on acceptance, then the user message.
+  assert.equal(thread.json.messages.length, 2);
+  assert.equal(thread.json.messages[0].senderId, 0);
+  assert.ok(thread.json.messages[0].body.includes('A warm hello from SEREN'));
+  assert.ok(thread.json.messages[0].body.includes('have both said yes'));
+  assert.ok(thread.json.messages[0].body.includes('A gentle first step:'));
+  assert.equal(thread.json.messages[1].body, 'Hello, grateful to connect.');
 
   // Block → messaging closed.
   await api('POST', '/api/blocks', { profileId: a.id, blockedId: b.id });

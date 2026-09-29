@@ -186,6 +186,7 @@ export function findMatches(requester, candidates, opts = {}) {
     const cs = candidate.consents || {};
     const settings = candidate.consentSettings || {};
     if (cs.community_visible === false) continue;
+    if (cs.introductions !== true) continue; // real consent hole: introductions are opt-in
     if (settings.discoveryEnabled === false) continue;
     if (settings.paused === true) continue;
 
@@ -217,6 +218,59 @@ export function findMatches(requester, candidates, opts = {}) {
 
   results.sort((a, b) => b.score - a.score || a.candidate.id - b.candidate.id);
   return results.slice(0, Math.max(1, limit));
+}
+
+/* ------------------------------------------------------------------ */
+/* Bilateral proposal reasons.                                         */
+/* ------------------------------------------------------------------ */
+
+/** Honest fallback when no concrete benefit for the candidate can be derived. */
+export const PAIR_REASON_FALLBACK =
+  "Based on what they've shared, the specific benefit for them is still open — that's yours to discover together.";
+
+function truncateText(text, max = 90) {
+  const t = typeof text === 'string' ? text.trim() : '';
+  return t.length > max ? t.slice(0, max).trimEnd() + '…' : t;
+}
+
+/**
+ * Reasons for each side of a potential introduction.
+ * - forRequester: the existing explainable why-it-fits reasons, verbatim.
+ * - forCandidate: derived ONLY from the candidate's stated intentions,
+ *   practices, and interests plus the requester's stated offer/intention.
+ *   A concrete link = shared keyword tokens between those two texts. With no
+ *   concrete link, returns the honest fallback. Never invents mutual
+ *   interest, shared history, or certainty.
+ *
+ * @param {object} requester camelCase profile
+ * @param {object} candidate camelCase profile
+ * @param {object} scored scoreCandidate/findMatches result (has .reasons)
+ * @param {string} requesterOffer the requester's stated offer (free text)
+ * @returns {{forRequester: string[], forCandidate: string}}
+ */
+export function buildPairReasons(requester, candidate, scored, requesterOffer = '') {
+  const forRequester = [...(scored?.reasons || [])];
+
+  const candStated = [
+    candidate?.intention || '',
+    asArray(candidate?.practices).map((p) => PRACTICE_LABELS[p] || p).join(' '),
+    asArray(candidate?.intentions).map((i) => INTENTION_LABELS[i] || i).join(' '),
+    asArray(candidate?.interests).join(' '),
+  ].join(' ');
+  const reqStated = [requesterOffer || '', requester?.intention || ''].join(' ');
+
+  const candTokens = new Set(tokenize(candStated));
+  const shared = [...new Set(tokenize(reqStated))].filter((t) => candTokens.has(t)).slice(0, 3);
+
+  let forCandidate = PAIR_REASON_FALLBACK;
+  if (shared.length > 0) {
+    const offerBit = String(requesterOffer || '').trim()
+      ? ` — your offer of “${truncateText(requesterOffer, 90)}” speaks to that ground`
+      : '';
+    forCandidate =
+      `They've mentioned ${shared.join(', ')} in what they're looking for${offerBit}.`;
+  }
+  return { forRequester, forCandidate };
 }
 
 /* ------------------------------------------------------------------ */

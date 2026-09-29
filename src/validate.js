@@ -337,6 +337,9 @@ export function validateConnectionRequest(body) {
     push(errors, 'connectionType', 'connectionType is not a recognized connection type');
   }
   checkShortText(errors, body.message, 'message', { required: true, min: 5, max: 500 });
+  if (body.briefId !== undefined && body.briefId !== null) {
+    checkId(errors, body, 'briefId');
+  }
   if (body.format !== undefined && body.format !== null && body.format !== '') {
     if (!CONNECTION_FORMATS.includes(body.format)) {
       push(errors, 'format', 'format must be a recognized conversation format');
@@ -488,5 +491,85 @@ export function validatePlanInput(body) {
   }
   if (body.timeText !== undefined) checkShortText(errors, body.timeText, 'timeText', { max: 200 });
   if (body.expectations !== undefined) checkShortText(errors, body.expectations, 'expectations', { max: 500 });
+  return { ok: errors.length === 0, errors };
+}
+
+/* ------------------------------------------------------------------ */
+/* Connection briefs.                                                  */
+/* ------------------------------------------------------------------ */
+
+const BRIEF_TEXT_FIELDS = [
+  'who_text', 'intention_text', 'good_fit_text', 'offer_text',
+  'logistics_text', 'boundaries_text', 'private_notes', 'shared_text',
+];
+
+function checkBriefFields(errors, body, { requiredSharedText = false } = {}) {
+  for (const field of BRIEF_TEXT_FIELDS) {
+    const value = body[field];
+    if (value === undefined || value === null || value === '') {
+      if (requiredSharedText && field === 'shared_text') {
+        push(errors, field, 'shared_text is required');
+      }
+      continue;
+    }
+    if (typeof value !== 'string') {
+      push(errors, field, `${field} must be a string`);
+    } else if (value.length > 2000) {
+      push(errors, field, `${field} must be at most 2000 characters`);
+    }
+  }
+}
+
+/** Draft fields supplied for brief creation/update: all optional, max 2000. */
+export function validateBriefDraft(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkBriefFields(errors, body);
+  return { ok: errors.length === 0, errors };
+}
+
+/** PATCH fields: same shape as the draft — only present fields validated. */
+export function validateBriefUpdate(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkBriefFields(errors, body);
+  if (BRIEF_TEXT_FIELDS.every((f) => body[f] === undefined)) {
+    push(errors, 'body', 'supply at least one brief field to update');
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Approve: {shared_text (required, 1–600 chars), consent_save (must be true),
+ * consent_share (optional boolean)}.
+ */
+export function validateBriefApprove(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkBriefFields(errors, body, { requiredSharedText: true });
+  const shared = body.shared_text;
+  if (typeof shared === 'string') {
+    const len = shared.trim().length;
+    if (len === 0) {
+      push(errors, 'shared_text', 'shared_text must not be empty');
+    } else if (len > 600) {
+      push(errors, 'shared_text', 'shared_text must be at most 600 characters');
+    }
+  }
+  if (body.consent_save !== true) {
+    push(errors, 'consent_save', 'consent_save must be true to approve this brief');
+  }
+  if (body.consent_share !== undefined && typeof body.consent_share !== 'boolean') {
+    push(errors, 'consent_share', 'consent_share must be a boolean');
+  }
   return { ok: errors.length === 0, errors };
 }
