@@ -4,8 +4,9 @@
 // (from SEEKING), consents with introductions=true. Richer fields ride along.
 //
 // Payload notes:
-// - `values` (screen 6) has no column in the DB, so it is persisted inside
-//   prefs.values (JSON) rather than being silently dropped as a top-level key.
+// - `values` (screen 6) is persisted top-level (values_json), the same field
+//   the conversational onboarding writes, so guide.js reads it identically.
+//   prefs.values stays for backward compatibility.
 // - `intentions[]` is derived from the prompt chip picked on screen 2, and
 //   only values present in the live taxonomy are sent.
 
@@ -93,19 +94,35 @@ const STEPS = [
 
 const DRAFT_KEY = 'seren.onboarding2.draft.v1';
 
+import { renderOnboardingChat } from './onboarding-chat.js';
+
+/**
+ * #/onboarding dispatcher.
+ *
+ * The conversational interview is the default experience: onboarding itself
+ * IS the chatbot conversation. Members who already have a profile on this
+ * device go home (the guide lives there); `?mode=classic` restores the
+ * 7-screen form for anyone who prefers it.
+ */
 export async function renderOnboarding(root, ctx) {
+  if (get('profileId')) {
+    navigate('/');
+    return;
+  }
+  const mode = ctx && ctx.params ? ctx.params.mode : null;
+  if (mode === 'classic') {
+    await renderClassicOnboarding(root, ctx);
+    return;
+  }
+  await renderOnboardingChat(root);
+}
+
+export async function renderClassicOnboarding(root, ctx) {
   root.innerHTML = '';
 
   // Already have a profile on this device — don't create a second one.
   if (get('profileId')) {
-    const shell = pageShell('You’re already here', 'Onboarding');
-    shell.body.appendChild(card([
-      el(`<h2 style="margin-top:0">Welcome back</h2>`),
-      el(`<p>There’s already a SEREN profile on this device. You can continue discovering, or refine your profile.</p>`),
-      el(`<div class="btn-row"><a class="btn btn-primary" href="#/discover">Continue to Discover</a>
-        <a class="btn btn-secondary" href="#/me/edit">Edit my profile</a></div>`),
-    ]));
-    root.appendChild(shell.root);
+    navigate('/');
     return;
   }
 
@@ -485,6 +502,10 @@ export async function renderOnboarding(root, ctx) {
         practices: draft.practices,
         intentions,
         connectionPrefs: { seeking, availability: '' },
+        // Values are stored top-level (values_json) so guide.js reads the
+        // same field for both onboarding flows; prefs.values stays for
+        // backward compatibility with older readers.
+        values: draft.values,
         prefs: {
           localRemote: draft.localRemote,
           formats: draft.formats,

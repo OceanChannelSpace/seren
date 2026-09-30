@@ -19,14 +19,27 @@ const MAX_SEND = 2000;
 const BRIEF_DEFAULT_TEXT = 'Here is what SEREN understood from your conversation so far — review it before anything is shared.';
 const PROPOSALS_DEFAULT_TEXT = 'A few thoughtful suggestions, based on your brief. Take your time — both people opt in before anything is shared.';
 
-export async function renderChat(mount) {
-  const profileId = get('profileId');
+export async function renderChat(mount, opts = {}) {
+  // opts makes the view reusable for profile-less flows (e.g. the
+  // conversational onboarding interview). Defaults preserve the member
+  // guide behavior exactly.
+  const {
+    profileId = get('profileId'),
+    sessionKey = SESSION_KEY,
+    startFn = (pid) => api.chatStart(pid),
+    sendFn = (pid, sid, text) => api.chatMessage(pid, sid, text),
+    resumeFn = (pid, sid) => api.chatResume(pid, sid),
+    title = 'SEREN guide',
+    subtitle = 'A guided conversation — nothing is shared until you approve it.',
+    placeholder = 'Share what feels meaningful…',
+    onTurn = null,
+  } = opts;
 
   const wrap = el(`
     <div class="chat-wrap">
       <header class="chat-head">
-        <p class="chat-title"><span aria-hidden="true">✦</span> SEREN guide</p>
-        <p class="chat-sub">A guided conversation — nothing is shared until you approve it.</p>
+        <p class="chat-title"><span aria-hidden="true">✦</span> ${esc(title)}</p>
+        <p class="chat-sub">${esc(subtitle)}</p>
       </header>
       <div class="chat-thread" role="log" aria-live="polite" aria-label="Conversation with SEREN"></div>
       <div class="chat-error" role="alert" hidden></div>
@@ -35,7 +48,7 @@ export async function renderChat(mount) {
         <form class="chat-composer">
           <label class="sr-only" for="chat-input">Message SEREN</label>
           <textarea id="chat-input" class="input" rows="2" maxlength="${MAX_SEND}"
-            placeholder="Share what feels meaningful…" autocomplete="off"></textarea>
+            placeholder="${esc(placeholder)}" autocomplete="off"></textarea>
           <button type="submit" class="btn btn-primary">Send</button>
         </form>
       </div>
@@ -69,7 +82,7 @@ export async function renderChat(mount) {
     const id = data && data.session && data.session.id;
     if (id && id !== sessionId) {
       sessionId = id;
-      try { localStorage.setItem(SESSION_KEY, String(id)); } catch { /* private mode */ }
+      try { localStorage.setItem(sessionKey, String(id)); } catch { /* private mode */ }
     }
   }
 
@@ -228,7 +241,7 @@ export async function renderChat(mount) {
     input.disabled = true;
     const typing = typingIndicator();
     try {
-      const data = await api.chatMessage(profileId, sessionId, trimmed);
+      const data = await sendFn(profileId, sessionId, trimmed);
       typing.remove();
       rememberSession(data);
       const msgs = Array.isArray(data.messages) ? data.messages : [];
@@ -238,6 +251,7 @@ export async function renderChat(mount) {
         await renderProposals(data.proposals, data.brief && data.brief.id);
       }
       renderQuickReplies(data.quickReplies);
+      if (onTurn) await onTurn(data);
       if (msgs.length) announce('SEREN replied.');
     } catch (e) {
       typing.remove();
@@ -267,12 +281,12 @@ export async function renderChat(mount) {
    *  contextual state (question / brief / proposals) the payload carries. */
   async function resume() {
     let stored = null;
-    try { stored = localStorage.getItem(SESSION_KEY); } catch { /* private mode */ }
+    try { stored = localStorage.getItem(sessionKey); } catch { /* private mode */ }
     if (!stored) { await startFresh(); return; }
 
     const typing = typingIndicator();
     try {
-      const data = await api.chatResume(profileId, stored);
+      const data = await resumeFn(profileId, stored);
       typing.remove();
       sessionId = (data.session && data.session.id) || stored;
       const transcript = Array.isArray(data.transcript) ? data.transcript : [];
@@ -294,7 +308,7 @@ export async function renderChat(mount) {
       typing.remove();
       if (e instanceof api.ApiError && (e.status === 404 || e.status === 403)) {
         // Session gone or not ours — start clean.
-        try { localStorage.removeItem(SESSION_KEY); } catch { /* private mode */ }
+        try { localStorage.removeItem(sessionKey); } catch { /* private mode */ }
         await startFresh();
       } else {
         showError(api.friendlyError(e));
@@ -305,7 +319,7 @@ export async function renderChat(mount) {
   async function startFresh() {
     const typing = typingIndicator();
     try {
-      const data = await api.chatStart(profileId);
+      const data = await startFn(profileId);
       typing.remove();
       rememberSession(data);
       const msgs = Array.isArray(data.messages) ? data.messages : [];

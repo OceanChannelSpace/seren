@@ -663,3 +663,29 @@ export function validateRelink(body) {
   }
   return { ok: errors.length === 0, errors };
 }
+
+/* ------------------------------------------------------------------ */
+/* Conversational onboarding chat (profile-less sessions).              */
+/* ------------------------------------------------------------------ */
+
+/** Onboarding chat start: {} — an empty JSON object is fine. */
+export function validateOnboardingStart(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  return { ok: true, errors };
+}
+
+/** Onboarding chat message: {sessionId, text} — text 1..2000 chars. */
+export function validateOnboardingMessage(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'sessionId');
+  checkShortText(errors, body.text, 'text', { required: true, min: 1, max: 2000 });
+  return { ok: errors.length === 0, errors };
+}

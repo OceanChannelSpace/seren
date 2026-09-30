@@ -325,6 +325,44 @@ if (userVersion < 5) {
   db.exec('PRAGMA user_version = 5');
 }
 
+// v6: profile-less (onboarding) chat sessions. The conversational onboarding
+// collects profile fields before any profile exists, so chat_sessions.
+// profile_id becomes nullable and a new onboarding_json column carries the
+// in-progress answers ({name, email, interests, intention, seeking, values}).
+// SQLite cannot alter column nullability in place, so the table is rebuilt.
+function migrateToV6() {
+  db.exec(`
+    CREATE TABLE chat_sessions_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER,
+      guide_session_id INTEGER,
+      brief_id INTEGER,
+      stage TEXT NOT NULL DEFAULT 'start',
+      pending_question_id TEXT,
+      pending_field TEXT,
+      transcript_json TEXT NOT NULL DEFAULT '[]',
+      onboarding_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    INSERT INTO chat_sessions_new
+      (id, profile_id, guide_session_id, brief_id, stage, pending_question_id,
+       pending_field, transcript_json, onboarding_json, created_at, updated_at)
+    SELECT id, profile_id, guide_session_id, brief_id, stage, pending_question_id,
+       pending_field, transcript_json, '{}', created_at, updated_at
+    FROM chat_sessions
+  `);
+  db.exec('DROP TABLE chat_sessions');
+  db.exec('ALTER TABLE chat_sessions_new RENAME TO chat_sessions');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_chat_sessions_profile ON chat_sessions(profile_id)');
+}
+if (userVersion < 6) {
+  migrateToV6();
+  db.exec('PRAGMA user_version = 6');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -519,7 +557,7 @@ export function listCandidateProfiles() {
 export function createProfile({
   name, email, interests, intention, connectionPrefs, consents, isSeed = false,
   pronouns = '', region = '', photoUrl = '', about = '', visualIdentity = 'minimal',
-  intentions = [], intentionsOther = '', practices = [], practicesOther = '',
+  intentions = [], intentionsOther = '', practices = [], practicesOther = '', values = [],
   prefs = {}, consentSettings = {}, links = {},
 }) {
   const now = new Date().toISOString();
@@ -536,8 +574,8 @@ export function createProfile({
     INSERT INTO profiles
       (name, email, interests, intention, connection_prefs, consents, is_seed,
        pronouns, region, photo_url, about, visual_identity, intentions, intentions_other,
-       practices, practices_other, prefs, consent_settings, links_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       practices, practices_other, prefs, consent_settings, links_json, values_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     name.trim(),
@@ -559,6 +597,7 @@ export function createProfile({
     JSON.stringify(mergedPrefs),
     JSON.stringify({ ...defaultConsentSettings(consents), ...consentSettings }),
     JSON.stringify(normalizeLinks(links)),
+    JSON.stringify(Array.isArray(values) ? values : []),
     now,
     now,
   );
@@ -897,13 +936,14 @@ function toChatSession(row) {
   if (!row) return null;
   return {
     id: row.id,
-    profileId: row.profile_id,
+    profileId: row.profile_id ?? null,
     guideSessionId: row.guide_session_id ?? null,
     briefId: row.brief_id ?? null,
     stage: row.stage || 'start',
     pendingQuestionId: row.pending_question_id || null,
     pendingField: row.pending_field || null,
     transcript: parseJson(row.transcript_json, []),
+    onboarding: parseJson(row.onboarding_json, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -916,37 +956,42 @@ export function getChatSession(id) {
 
 /**
  * Create a chat session. Optional extras: guideSessionId, briefId,
- * pendingQuestionId, pendingField, and an initial transcript array.
+ * pendingQuestionId, pendingField, an initial transcript array, and the
+ * in-progress onboarding answers. profileId may be null for onboarding
+ * sessions that have not created a profile yet.
  */
-export function createChatSession({ profileId, stage = 'start', guideSessionId = null,
-  briefId = null, pendingQuestionId = null, pendingField = null, transcript = [] }) {
+export function createChatSession({ profileId = null, stage = 'start', guideSessionId = null,
+  briefId = null, pendingQuestionId = null, pendingField = null, transcript = [],
+  onboarding = {} }) {
   const now = new Date().toISOString();
   const result = db.prepare(`
     INSERT INTO chat_sessions
       (profile_id, guide_session_id, brief_id, stage, pending_question_id,
-       pending_field, transcript_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       pending_field, transcript_json, onboarding_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(profileId, guideSessionId, briefId, stage, pendingQuestionId, pendingField,
-    JSON.stringify(transcript), now, now);
+    JSON.stringify(transcript), JSON.stringify(onboarding || {}), now, now);
   return getChatSession(Number(result.lastInsertRowid));
 }
 
 /**
- * Partial update. patch keys: guideSessionId, briefId, stage,
- * pendingQuestionId, pendingField, transcript (array -> stored as JSON).
- * updated_at always moves.
+ * Partial update. patch keys: profileId, guideSessionId, briefId, stage,
+ * pendingQuestionId, pendingField, transcript (array -> stored as JSON),
+ * onboarding (object -> stored as JSON). updated_at always moves.
  */
 export function updateChatSession(id, patch = {}) {
   const existing = getChatSession(id);
   if (!existing) return null;
   const cols = [];
   const params = [];
+  if (patch.profileId !== undefined) { cols.push('profile_id = ?'); params.push(patch.profileId); }
   if (patch.guideSessionId !== undefined) { cols.push('guide_session_id = ?'); params.push(patch.guideSessionId); }
   if (patch.briefId !== undefined) { cols.push('brief_id = ?'); params.push(patch.briefId); }
   if (patch.stage !== undefined) { cols.push('stage = ?'); params.push(patch.stage); }
   if (patch.pendingQuestionId !== undefined) { cols.push('pending_question_id = ?'); params.push(patch.pendingQuestionId); }
   if (patch.pendingField !== undefined) { cols.push('pending_field = ?'); params.push(patch.pendingField); }
   if (patch.transcript !== undefined) { cols.push('transcript_json = ?'); params.push(JSON.stringify(patch.transcript)); }
+  if (patch.onboarding !== undefined) { cols.push('onboarding_json = ?'); params.push(JSON.stringify(patch.onboarding || {})); }
   cols.push('updated_at = ?');
   params.push(new Date().toISOString());
   db.prepare(`UPDATE chat_sessions SET ${cols.join(', ')} WHERE id = ?`).run(...params, id);

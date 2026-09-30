@@ -159,6 +159,20 @@ export const chatMessage = (profileId, sessionId, text) =>
 export const chatResume = (profileId, sessionId) =>
   request('GET', `/api/chat/session/${encodeURIComponent(sessionId)}${q({ profileId: profileId ?? get('profileId') })}`);
 
+// --- conversational onboarding chat (profile-less sessions) ---
+// Contract:
+//   POST /api/onboarding/chat/start        {}                  → { session:{id, stage}, messages, quickReplies? }
+//   POST /api/onboarding/chat/message      {sessionId, text}   → same shape (+ profileCreated on consent)
+//   GET  /api/onboarding/chat/session/:id                      → { session, transcript, question?, quickReplies? }
+// Once consent creates the profile, the same session continues into the
+// standard guide flow via these endpoints — no profile id is ever needed.
+export const onboardingChatStart = () =>
+  request('POST', '/api/onboarding/chat/start', {});
+export const onboardingChatMessage = (sessionId, text) =>
+  request('POST', '/api/onboarding/chat/message', { sessionId, text });
+export const onboardingChatResume = (sessionId) =>
+  request('GET', `/api/onboarding/chat/session/${encodeURIComponent(sessionId)}`);
+
 // --- device relink (returning users) ---
 // POST /api/auth/relink {email, name} → 200 {profileId, name} | 404 | 400
 export const relink = (email, name) =>

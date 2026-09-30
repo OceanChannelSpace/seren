@@ -7,7 +7,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import {
   ERROR_CODES, VALID_TRANSITIONS, INTRO_STATUS, RESPONSE_KINDS,
-  PRACTICES, INTENTIONS, CONNECTION_TYPES, CONNECTION_FORMATS, FORMAT_LABELS,
+  PRACTICES, PRACTICE_VALUES, INTENTIONS, CONNECTION_TYPES, CONNECTION_FORMATS, FORMAT_LABELS,
   COMMITMENT_LEVELS, COMMITMENT_LABELS, TONES, TONE_LABELS,
   CIRCLE_KINDS, CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, REQUEST_TEMPLATES, EXPLORE_TOPICS,
 } from './constants.js';
@@ -18,7 +18,12 @@ import {
   validateGuideStart, validateGuideAnswer,
   validateBriefDraft, validateBriefUpdate, validateBriefApprove,
   validateChatStart, validateChatMessage, validateRelink,
+  validateOnboardingStart, validateOnboardingMessage,
 } from './validate.js';
+import {
+  startOnboarding, handleOnboardingTurn, questionForStage,
+  quickRepliesForStage, isOnboardingStage,
+} from './onboarding.js';
 import { findBestMatch, buildIntroNote, findMatches } from './match.js';
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
@@ -1507,6 +1512,56 @@ app.post('/api/chat/start', (req, res) => {
   });
 });
 
+/**
+ * Run one turn of the standard guide stage machine
+ * (seeking -> follow-ups -> brief review -> proposals).
+ * @returns {object} turn result, or {error:{status,code,message}}
+ */
+function runChatTurn(profile, session, text) {
+  switch (session.stage) {
+    case 'seeking': return chatHandleSeeking(profile, session, text);
+    case 'followup': return chatHandleFollowup(profile, session, text);
+    case 'brief_review': return chatHandleBriefReview(profile, session, text);
+    case 'editing': return chatHandleEditing(profile, session, text);
+    case 'proposals': return chatHandleProposals(profile, session, text);
+    case 'confirm_replace': return chatHandleConfirmReplace(profile, session, text);
+    case 'resume_offer': return chatHandleResumeOffer(profile, session, text);
+    default:
+      return chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
+        'This chat session is in an unknown state.');
+  }
+}
+
+/**
+ * Stage context for resuming a chat that already has a profile: the pending
+ * question, the brief under review, and/or the current proposals, so the
+ * frontend can rebuild the thread after a reload.
+ */
+function chatResumeContext(profile, session) {
+  const body = {};
+  if (session.stage === 'followup' && session.pendingQuestionId && session.guideSessionId) {
+    const gs = getGuideSession(session.guideSessionId);
+    if (gs) {
+      const q = chatGuideQuestions(profile, gs).find((qq) => qq.id === session.pendingQuestionId);
+      if (q) body.question = questionMessage(q);
+    }
+  }
+  if ((session.stage === 'brief_review' || session.stage === 'editing') && session.briefId) {
+    const brief = getBrief(session.briefId);
+    if (brief) body.brief = publicBrief(brief);
+  }
+  if (session.stage === 'proposals') {
+    const brief = session.briefId ? getBrief(session.briefId) : getBriefByProfile(profile.id);
+    if (brief) {
+      if (brief.status === 'active' && brief.consent_save) {
+        body.proposals = briefProposals(profile, brief);
+      }
+      body.brief = publicBrief(brief);
+    }
+  }
+  return body;
+}
+
 app.post('/api/chat/message', (req, res) => {
   const { ok, errors } = validateChatMessage(req.body);
   if (!ok) return validationErr(res, errors);
@@ -1524,19 +1579,7 @@ app.post('/api/chat/message', (req, res) => {
   const text = String(req.body.text).trim();
   const userEntry = { role: 'user', kind: 'text', text, ts: Date.now() };
 
-  let turn;
-  switch (session.stage) {
-    case 'seeking': turn = chatHandleSeeking(profile, session, text); break;
-    case 'followup': turn = chatHandleFollowup(profile, session, text); break;
-    case 'brief_review': turn = chatHandleBriefReview(profile, session, text); break;
-    case 'editing': turn = chatHandleEditing(profile, session, text); break;
-    case 'proposals': turn = chatHandleProposals(profile, session, text); break;
-    case 'confirm_replace': turn = chatHandleConfirmReplace(profile, session, text); break;
-    case 'resume_offer': turn = chatHandleResumeOffer(profile, session, text); break;
-    default:
-      turn = chatTurnError(400, ERROR_CODES.VALIDATION_ERROR,
-        'This chat session is in an unknown state.');
-  }
+  const turn = runChatTurn(profile, session, text);
   if (turn.error) {
     return err(res, turn.error.status, turn.error.code, turn.error.message);
   }
@@ -1560,27 +1603,150 @@ app.get('/api/chat/session/:id', (req, res) => {
   }
 
   const body = { session: chatSessionView(session), transcript: session.transcript || [] };
-  if (session.stage === 'followup' && session.pendingQuestionId && session.guideSessionId) {
-    const gs = getGuideSession(session.guideSessionId);
-    if (gs) {
-      const q = chatGuideQuestions(profile, gs).find((qq) => qq.id === session.pendingQuestionId);
-      if (q) body.question = questionMessage(q);
-    }
-  }
-  if ((session.stage === 'brief_review' || session.stage === 'editing') && session.briefId) {
-    const brief = getBrief(session.briefId);
-    if (brief) body.brief = publicBrief(brief);
-  }
-  if (session.stage === 'proposals') {
-    const brief = session.briefId ? getBrief(session.briefId) : getBriefByProfile(profile.id);
-    if (brief) {
-      if (brief.status === 'active' && brief.consent_save) {
-        body.proposals = briefProposals(profile, brief);
-      }
-      body.brief = publicBrief(brief);
-    }
-  }
+  Object.assign(body, chatResumeContext(profile, session));
   res.json(body);
+});
+
+// ---------- conversational onboarding chat ----------
+//
+// Profile-less sessions: the interview collects every required profile
+// field (name, email, interests, intention, seeking, values, explicit
+// introductions consent) before any profile exists. On explicit consent the
+// profile is created through the standard creation path and the SAME
+// session continues into the guide flow (follow-ups -> brief -> proposals).
+// Declining consent creates nothing and shares nothing.
+
+const PRACTICE_VALUE_SET = new Set(PRACTICE_VALUES);
+
+/**
+ * Seed the guide flow from the intention collected during onboarding and
+ * ask the first follow-up question (or finish straight to brief review).
+ */
+function beginGuideFromIntention(profile, session, intentionText) {
+  const parsed = parseIntent(intentionText);
+  const gs = createGuideSession({ profileId: profile.id, requestText: intentionText, parsed });
+  const qs = chatGuideQuestions(profile, gs);
+  if (qs.length === 0) return finishGuideChat(profile, session, gs);
+  return {
+    patch: { guideSessionId: gs.id, stage: 'followup', pendingQuestionId: qs[0].id },
+    messages: [questionMessage(qs[0])],
+    quickReplies: questionQuickReplies(qs[0]),
+  };
+}
+
+/**
+ * Consent was given: validate, create the profile through the standard
+ * path, attach it to the session, and hand the SAME session to the guide.
+ */
+function completeOnboardingChat(res, session, userEntry, turn) {
+  const c = turn.create;
+  const payload = {
+    name: c.name,
+    email: c.email,
+    interests: c.interests,
+    intention: c.intention,
+    connectionPrefs: { seeking: c.seeking, availability: '' },
+    consents: { introductions: true, community_visible: true, ai_matching: true },
+    // Practices ride along where the legacy interest overlaps the taxonomy;
+    // anything outside it stays on the legacy interests field only.
+    practices: (c.interests || []).filter((i) => PRACTICE_VALUE_SET.has(i)),
+    values: c.values || [],
+  };
+  const { ok, errors } = validateProfileInput(payload, { isUpdate: false });
+  if (!ok) return validationErr(res, errors);
+  const email = String(c.email).trim().toLowerCase();
+  if (getProfileByEmail(email)) {
+    return err(res, 409, ERROR_CODES.EMAIL_TAKEN,
+      'That email already has a SEREN space. Please share a different email.');
+  }
+  const profile = createProfile(payload);
+  const first = String(profile.name).trim().split(/\s+/)[0] || 'friend';
+  const guide = beginGuideFromIntention(profile, session, c.intention);
+  const body = commitChatTurn(session, userEntry, {
+    patch: { profileId: profile.id, ...guide.patch },
+    messages: [
+      botText(
+        `Your space is ready, ${first} ✦ Based on what you shared, I'll ask a few thoughtful questions, then suggest members with shared interests — nothing is shared until you approve it.`,
+      ),
+      ...guide.messages,
+    ],
+    ...(guide.quickReplies !== undefined ? { quickReplies: guide.quickReplies } : {}),
+    ...(guide.brief !== undefined ? { brief: guide.brief } : {}),
+  });
+  body.profileCreated = { profileId: profile.id };
+  return res.status(201).json(body);
+}
+
+app.post('/api/onboarding/chat/start', (req, res) => {
+  const { ok, errors } = validateOnboardingStart(req.body);
+  if (!ok) return validationErr(res, errors);
+  const begun = startOnboarding();
+  const session = createChatSession({
+    profileId: null, stage: begun.stage, onboarding: begun.answers, transcript: begun.messages,
+  });
+  const body = { session: chatSessionView(session), messages: begun.messages };
+  const qr = quickRepliesForStage(begun.stage);
+  if (qr) body.quickReplies = qr;
+  return res.status(201).json(body);
+});
+
+app.post('/api/onboarding/chat/message', (req, res) => {
+  const { ok, errors } = validateOnboardingMessage(req.body);
+  if (!ok) return validationErr(res, errors);
+  const sessionId = parseId(req.body.sessionId);
+  const session = sessionId === null ? null : getChatSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Chat session not found.');
+
+  const text = String(req.body.text).trim();
+  const userEntry = { role: 'user', kind: 'text', text, ts: Date.now() };
+
+  // Post-handoff: the session now belongs to a real profile — run the
+  // standard guide machine so the conversation continues uninterrupted.
+  if (session.profileId) {
+    const profile = getProfile(session.profileId);
+    if (!profile) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+    const turn = runChatTurn(profile, session, text);
+    if (turn.error) return err(res, turn.error.status, turn.error.code, turn.error.message);
+    return res.json(commitChatTurn(session, userEntry, turn));
+  }
+
+  if (!isOnboardingStage(session.stage)) {
+    return err(res, 400, ERROR_CODES.VALIDATION_ERROR,
+      'This chat session is in an unknown state.');
+  }
+  const turn = handleOnboardingTurn(session.stage, session.onboarding || {}, text, {
+    emailTaken: (email) => !!getProfileByEmail(String(email).trim().toLowerCase()),
+  });
+  if (turn.create) {
+    return completeOnboardingChat(res, session, userEntry, turn);
+  }
+  return res.json(commitChatTurn(session, userEntry, {
+    patch: { stage: turn.stage, onboarding: turn.answers },
+    messages: turn.messages,
+    ...(turn.quickReplies !== undefined ? { quickReplies: turn.quickReplies } : {}),
+  }));
+});
+
+/**
+ * Resume an onboarding chat: the transcript plus the current question (or
+ * quick replies), or — once the profile exists — the standard stage context.
+ */
+app.get('/api/onboarding/chat/session/:id', (req, res) => {
+  const sessionId = parseId(req.params.id);
+  const session = sessionId === null ? null : getChatSession(sessionId);
+  if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Chat session not found.');
+  const body = { session: chatSessionView(session), transcript: session.transcript || [] };
+  if (session.profileId) {
+    const profile = getProfile(session.profileId);
+    if (!profile) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+    Object.assign(body, chatResumeContext(profile, session));
+  } else if (isOnboardingStage(session.stage)) {
+    const q = questionForStage(session.stage, session.onboarding || {});
+    if (q && q.kind === 'question') body.question = q;
+    const qr = quickRepliesForStage(session.stage);
+    if (qr) body.quickReplies = qr;
+  }
+  return res.json(body);
 });
 
 /**
