@@ -15,13 +15,28 @@ import { renderChat } from './chat.js';
 import * as api from '../api.js';
 import { get, setProfileId } from '../state.js';
 import { navigate } from '../router.js';
+import { el } from '../ui.js';
 
 const OB_SESSION_KEY = 'seren.obSessionId';
 
 export async function renderOnboardingChat(mount) {
-  // Already have a profile on this device — the guide lives at home.
+  // Already have a profile on this device: say so plainly instead of
+  // silently bouncing home — a silent redirect reads as "onboarding is broken".
   if (get('profileId')) {
-    navigate('/');
+    const wrap = el(`
+      <div class="chat-wrap">
+        <header class="chat-head">
+          <p class="chat-title"><span aria-hidden="true">✦</span> You're already here</p>
+          <p class="chat-sub">Your SEREN space is already created — that first conversation was your onboarding. Your guide is waiting on the home screen.</p>
+        </header>
+        <div class="page-body">
+          <div class="card card-glow">
+            <button type="button" class="btn btn-primary" id="ob-go-home">Go to my space</button>
+          </div>
+        </div>
+      </div>`);
+    mount.appendChild(wrap);
+    wrap.querySelector('#ob-go-home').addEventListener('click', () => navigate('/'));
     return;
   }
   await renderChat(mount, {
