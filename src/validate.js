@@ -284,8 +284,47 @@ export function validateProfileInput(body, { isUpdate = false } = {}) {
       }
     }
   }
+  // v5: optional social/website links — validated when present.
+  if (body.links !== undefined) checkLinks(errors, body.links);
 
   return { ok: errors.length === 0, errors };
+}
+
+/** Supported keys for the optional profile links object. */
+export const LINK_KEYS = ['website', 'instagram', 'x', 'linkedin'];
+
+/**
+ * Validate the optional social/website links object.
+ * Pure check — normalization (scheme prefixing, trimming) happens at write time.
+ */
+function checkLinks(errors, links) {
+  if (!isPlainObject(links)) {
+    push(errors, 'links', 'links must be an object');
+    return;
+  }
+  for (const key of Object.keys(links)) {
+    if (!LINK_KEYS.includes(key)) {
+      push(errors, 'links', `links.${key} is not supported (use: ${LINK_KEYS.join(', ')})`);
+      continue;
+    }
+    const raw = typeof links[key] === 'string' ? links[key].trim() : '';
+    if (!raw) continue; // empty string clears the link
+    if (raw.length > 200) {
+      push(errors, 'links', `links.${key} must be at most 200 characters`);
+      continue;
+    }
+    const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw) ? raw : `https://${raw}`;
+    let protocol = '';
+    try {
+      protocol = new URL(candidate).protocol;
+    } catch {
+      push(errors, 'links', `links.${key} is not a valid URL`);
+      continue;
+    }
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      push(errors, 'links', `links.${key} must be an http(s) URL`);
+    }
+  }
 }
 
 /**

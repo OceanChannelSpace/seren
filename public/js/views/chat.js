@@ -30,13 +30,15 @@ export async function renderChat(mount) {
       </header>
       <div class="chat-thread" role="log" aria-live="polite" aria-label="Conversation with SEREN"></div>
       <div class="chat-error" role="alert" hidden></div>
-      <div class="chat-quick" aria-label="Suggested replies"></div>
-      <form class="chat-composer">
-        <label class="sr-only" for="chat-input">Message SEREN</label>
-        <textarea id="chat-input" class="input" rows="2" maxlength="${MAX_SEND}"
-          placeholder="Share what feels meaningful…" autocomplete="off"></textarea>
-        <button type="submit" class="btn btn-primary">Send</button>
-      </form>
+      <div class="chat-foot">
+        <div class="chat-quick" aria-label="Suggested replies"></div>
+        <form class="chat-composer">
+          <label class="sr-only" for="chat-input">Message SEREN</label>
+          <textarea id="chat-input" class="input" rows="2" maxlength="${MAX_SEND}"
+            placeholder="Share what feels meaningful…" autocomplete="off"></textarea>
+          <button type="submit" class="btn btn-primary">Send</button>
+        </form>
+      </div>
     </div>`);
   mount.appendChild(wrap);
 
@@ -231,6 +233,10 @@ export async function renderChat(mount) {
       rememberSession(data);
       const msgs = Array.isArray(data.messages) ? data.messages : [];
       for (const m of msgs) await renderBotMessage(m, data);
+      // Proposals can also arrive top-level (not nested in a message).
+      if (Array.isArray(data.proposals) && data.proposals.length) {
+        await renderProposals(data.proposals, data.brief && data.brief.id);
+      }
       renderQuickReplies(data.quickReplies);
       if (msgs.length) announce('SEREN replied.');
     } catch (e) {
@@ -304,6 +310,9 @@ export async function renderChat(mount) {
       rememberSession(data);
       const msgs = Array.isArray(data.messages) ? data.messages : [];
       for (const m of msgs) await renderBotMessage(m, data);
+      if (Array.isArray(data.proposals) && data.proposals.length) {
+        await renderProposals(data.proposals, data.brief && data.brief.id);
+      }
       renderQuickReplies(data.quickReplies);
     } catch (e) {
       typing.remove();

@@ -228,6 +228,42 @@ export function card(children) {
   return c;
 }
 
+const LINK_LABELS = { website: 'Website', instagram: 'Instagram', x: 'X (Twitter)', linkedin: 'LinkedIn' };
+
+/**
+ * Render a member's optional website/social links as safe external links.
+ * Returns null when there are no links. Callers must only pass links the
+ * viewer is allowed to see (the server gates them behind mutual consent).
+ */
+export function linksList(links) {
+  const entries = Object.entries(links || {}).filter(([, v]) => typeof v === 'string' && v.trim());
+  if (!entries.length) return null;
+  const wrap = el(`<div class="detail-section"><h3>Links</h3></div>`);
+  const list = el(`<ul class="link-list"></ul>`);
+  for (const [key, href] of entries) {
+    // Defense in depth: only http(s) links are rendered, even though the
+    // server normalizes stored links to http(s) at write time.
+    let safe = '';
+    try {
+      const url = new URL(href, 'https://seren.invalid');
+      if (url.protocol === 'http:' || url.protocol === 'https:') safe = url.toString();
+    } catch { /* skip */ }
+    if (!safe) continue;
+    const label = LINK_LABELS[key] || key;
+    const li = el(`<li></li>`);
+    const a = document.createElement('a');
+    a.href = safe;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = label;
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+  if (!list.children.length) return null;
+  wrap.appendChild(list);
+  return wrap;
+}
+
 /** Relative "x time ago" for ISO timestamps. */
 export function timeAgo(iso) {
   if (!iso) return '';

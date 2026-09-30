@@ -6,7 +6,7 @@ import * as api from '../api.js';
 import {
   el, esc, pageShell, errorBanner, infoBanner, loading, emptyState, card,
   avatarFor, statusPill, timeAgo, textArea, field, selectInput, textInput,
-  confirmDialog, toast, announce, friendlyError,
+  confirmDialog, toast, announce, friendlyError, linksList,
 } from '../ui.js';
 import { get, metaList, connectionTypeLabel, formatLabel } from '../state.js';
 import { navigate } from '../router.js';
@@ -102,6 +102,14 @@ export async function renderMessages(root, ctx) {
   headTop.prepend(avatarFor(other.name));
   head.appendChild(headTop);
   head.appendChild(statusPill(intro.status));
+
+  // The other person's website/social links — the server only includes these
+  // after mutual consent, so their presence here is the consent signal.
+  try {
+    const otherProfile = await api.getProfile(otherId);
+    const otherLinks = linksList(otherProfile && otherProfile.links);
+    if (otherLinks) head.appendChild(otherLinks);
+  } catch { /* links are optional; the conversation works without them */ }
 
   const headActions = el('<div class="match-actions"></div>');
   const endBtn = el('<button type="button" class="btn btn-ghost btn-small">End connection</button>');

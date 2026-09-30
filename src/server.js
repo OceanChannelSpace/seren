@@ -1470,7 +1470,7 @@ app.post('/api/chat/start', (req, res) => {
     const proposals = gated ? briefProposals(profile, brief) : [];
     const firstName = String(profile.name || 'friend').trim().split(/\s+/)[0] || 'friend';
     const messages = [botText(
-      `Welcome back, ${firstName}. Your brief is active — here are your current suggestions.`,
+      `Welcome back${firstName.toLowerCase() === 'friend' ? '' : `, ${firstName}`}. Your brief is active — here are your current suggestions.`,
     )];
     const session = createChatSession({
       profileId: profile.id, stage: 'proposals', briefId: brief.id, transcript: messages,

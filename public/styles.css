@@ -781,7 +781,7 @@ select.input {
 }
 
 /* ---------- modes ---------- */
-.mode-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
+.mode-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); align-items: start; }
 .mode-card { cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
 .mode-card:hover { transform: translateY(-2px); box-shadow: var(--glow); }
 .mode-card .mode-icon { font-size: 1.8rem; }
@@ -1055,8 +1055,22 @@ body.beta-locked .site-footer { display: none; }
 .chat-quick:empty { display: none; }
 .chat-quick .chip { font-size: 0.88rem; }
 
-.chat-composer {
+/* member website/social links (profile, connection header) */
+.link-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.link-list a {
+  display: inline-block; padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line); border-radius: 999px;
+  color: var(--seafoam); text-decoration: none; font-size: 0.88rem;
+}
+.link-list a:hover { border-color: var(--seafoam); }
+
+/* sticky footer: quick-reply chips sit above the composer and both stay
+   visible together — the chips must never render behind the composer */
+.chat-foot {
   position: sticky; bottom: 0.75rem; z-index: 2;
+  display: grid; gap: 0.55rem;
+}
+.chat-composer {
   display: flex; gap: 0.6rem; align-items: flex-end;
   background: var(--card-solid); border: 1px solid var(--line);
   border-radius: 20px; padding: 0.65rem 0.75rem;
@@ -1106,7 +1120,7 @@ body.beta-locked .site-footer { display: none; }
 @media (max-width: 560px) {
   .bubble-user, .bubble-bot { max-width: 85%; font-size: 0.95rem; }
   .chat-thread { min-height: 46vh; max-height: 56vh; }
-  .chat-composer { bottom: 0.5rem; }
+  .chat-foot { bottom: 0.5rem; }
   .chat-composer .btn { padding: 0.7rem 1rem; }
 }
 

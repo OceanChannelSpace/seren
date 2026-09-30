@@ -71,6 +71,18 @@ export async function renderMatchDetail(root, ctx) {
   }
   content.innerHTML = '';
 
+  // Hidden QA/test records and paused-discovery minimal views are not
+  // shown as browsable profiles.
+  if (person.hidden) {
+    content.appendChild(emptyState({
+      title: "This person isn't available.",
+      body: 'They may have paused discovery or left the community.',
+      actionLabel: 'Back to Discover',
+      actionHref: '#/discover',
+    }));
+    return;
+  }
+
   // --- shared profile ---
   const profileCard = card();
   const head = el(`<div class="detail-head"></div>`);

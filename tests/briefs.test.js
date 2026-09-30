@@ -95,9 +95,9 @@ async function makeActiveBrief(profileId, overrides = {}) {
 
 // ---------- migration v4 ----------
 
-test('migration v4: briefs table, shared-text column, chat_sessions, user_version, sentinel', () => {
+test('migration v5: briefs table, shared-text column, chat_sessions, user_version, sentinel', () => {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  assert.equal(version, 4);
+  assert.equal(version, 5);
   const briefCols = db.prepare('PRAGMA table_info(briefs)').all().map((r) => r.name);
   for (const c of ['id', 'profile_id', 'who_text', 'shared_text', 'consent_save', 'consent_share', 'status']) {
     assert.ok(briefCols.includes(c), `briefs missing column ${c}`);
@@ -108,6 +108,9 @@ test('migration v4: briefs table, shared-text column, chat_sessions, user_versio
   }
   const introCols = db.prepare('PRAGMA table_info(introductions)').all().map((r) => r.name);
   assert.ok(introCols.includes('requester_shared_text'));
+  const profileCols = db.prepare('PRAGMA table_info(profiles)').all().map((r) => r.name);
+  assert.ok(profileCols.includes('is_hidden'), 'profiles missing is_hidden');
+  assert.ok(profileCols.includes('links_json'), 'profiles missing links_json');
   const sentinel = db.prepare('SELECT id, name FROM profiles WHERE id = 0').get();
   assert.ok(sentinel, 'SEREN connector sentinel profile should exist');
   // The sentinel is not a member and never appears in listings.

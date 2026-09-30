@@ -295,6 +295,36 @@ if (userVersion < 4) {
   db.exec('PRAGMA user_version = 4');
 }
 
+// v5: optional website/social links on profiles + a hidden flag for QA/test
+// records. The one-time cleanup hides existing QA/test records from every
+// user-facing surface. 'qa'/'test' match as standalone words in names, and
+// 'qa@' as a test-email convention — avoiding false positives like 'Qasim'
+// or 'latest@example.com'. Hidden names are logged for audit.
+function migrateToV5() {
+  addColumnIfMissing('profiles', 'is_hidden', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('profiles', 'links_json', 'TEXT NOT NULL DEFAULT \'{}\'');
+  const hidden = db.prepare(`
+    UPDATE profiles
+    SET is_hidden = 1
+    WHERE id > 0 AND is_hidden = 0 AND (
+      ((' ' || lower(name) || ' ') LIKE '% qa %')
+      OR ((' ' || lower(name) || ' ') LIKE '% test %')
+      OR lower(email) LIKE '%qa@%'
+      OR lower(intention) LIKE '%qa test%'
+    )
+  `).run();
+  if (hidden.changes > 0) {
+    const names = db.prepare(`
+      SELECT name FROM profiles WHERE is_hidden = 1 AND id > 0
+    `).all().map((r) => r.name);
+    console.log(`[migrate] v5: hid ${hidden.changes} QA/test profile(s): ${names.join(', ')}`);
+  }
+}
+if (userVersion < 5) {
+  migrateToV5();
+  db.exec('PRAGMA user_version = 5');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -357,9 +387,11 @@ function toProfile(row) {
     practices: parseJson(row.practices, []),
     practicesOther: row.practices_other || '',
     values: parseJson(row.values_json, []),
+    links: parseJson(row.links_json, {}),
     prefs,
     consentSettings,
     isSeed: row.is_seed === 1,
+    isHidden: row.is_hidden === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -443,8 +475,29 @@ export function getProfileByEmail(email) {
   return toProfile(getProfileByEmailStmt.get(String(email).toLowerCase()));
 }
 
+/**
+ * Normalize the optional profile links object: keep only supported keys,
+ * trim, drop empties, prefix a scheme when missing, and serialize valid
+ * http(s) URLs. Anything invalid is dropped (validation runs first).
+ */
+function normalizeLinks(links) {
+  const allowed = ['website', 'instagram', 'x', 'linkedin'];
+  const out = {};
+  if (!links || typeof links !== 'object' || Array.isArray(links)) return out;
+  for (const key of allowed) {
+    const raw = typeof links[key] === 'string' ? links[key].trim() : '';
+    if (!raw || raw.length > 200) continue;
+    const candidate = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(raw) ? raw : `https://${raw}`;
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === 'http:' || url.protocol === 'https:') out[key] = url.toString();
+    } catch { /* drop invalid */ }
+  }
+  return out;
+}
+
 export function listPublicProfiles() {
-  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 ORDER BY id ASC').all();
+  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 AND is_hidden = 0 ORDER BY id ASC').all();
   return rows.map((r) => {
     const p = toProfile(r);
     return {
@@ -457,9 +510,9 @@ export function listPublicProfiles() {
   });
 }
 
-/** Full profiles, for matching candidates (includes consents + intention). */
+/** Full profiles, for matching candidates (includes consents + intention). Hidden QA/test records excluded. */
 export function listCandidateProfiles() {
-  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 ORDER BY id ASC').all();
+  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 AND is_hidden = 0 ORDER BY id ASC').all();
   return rows.map(toProfile);
 }
 
@@ -467,7 +520,7 @@ export function createProfile({
   name, email, interests, intention, connectionPrefs, consents, isSeed = false,
   pronouns = '', region = '', photoUrl = '', about = '', visualIdentity = 'minimal',
   intentions = [], intentionsOther = '', practices = [], practicesOther = '',
-  prefs = {}, consentSettings = {},
+  prefs = {}, consentSettings = {}, links = {},
 }) {
   const now = new Date().toISOString();
   const mergedPrefs = { ...defaultPrefs(), ...prefs };
@@ -483,8 +536,8 @@ export function createProfile({
     INSERT INTO profiles
       (name, email, interests, intention, connection_prefs, consents, is_seed,
        pronouns, region, photo_url, about, visual_identity, intentions, intentions_other,
-       practices, practices_other, prefs, consent_settings, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       practices, practices_other, prefs, consent_settings, links_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     name.trim(),
@@ -505,6 +558,7 @@ export function createProfile({
     String(practicesOther || '').trim(),
     JSON.stringify(mergedPrefs),
     JSON.stringify({ ...defaultConsentSettings(consents), ...consentSettings }),
+    JSON.stringify(normalizeLinks(links)),
     now,
     now,
   );
@@ -549,6 +603,7 @@ export function updateProfile(id, fields) {
   if (fields.practices !== undefined) { sets.push('practices = ?'); params.push(JSON.stringify(fields.practices)); }
   if (fields.practicesOther !== undefined) { sets.push('practices_other = ?'); params.push(str(fields.practicesOther)); }
   if (fields.values !== undefined) { sets.push('values_json = ?'); params.push(JSON.stringify(fields.values)); }
+  if (fields.links !== undefined) { sets.push('links_json = ?'); params.push(JSON.stringify(normalizeLinks(fields.links))); }
   if (fields.prefs !== undefined) {
     sets.push('prefs = ?'); params.push(JSON.stringify({ ...existing.prefs, ...fields.prefs }));
   }
@@ -596,15 +651,22 @@ export function isBlockedBetween(a, b) {
 /**
  * Privacy-filtered view of a profile for a viewer.
  * - Own profile (viewerId === id): full.
+ * - Hidden QA/test records: minimal (id, name) for everyone else.
  * - Paused / discovery disabled and no mutual connection: minimal (id, name).
  * - Otherwise: fields gated by the target's consent_settings.
- * Email is never exposed to other members.
+ * Email is never exposed to other members. Social/website links are treated
+ * as contact details and shown only after mutual consent.
  */
 export function getVisibleProfile(id, viewerId) {
   const p = getProfile(id);
   if (!p) return null;
   const vid = Number(viewerId);
   if (vid === p.id) return p; // own profile: everything
+
+  // QA/test records are never shown to other members.
+  if (p.isHidden) {
+    return { id: p.id, name: p.name, visualIdentity: p.visualIdentity, hidden: true };
+  }
 
   const mutual = Number.isInteger(vid) && vid > 0 ? hasMutualConnection(vid, p.id) : false;
   const cs = p.consentSettings || {};
@@ -632,6 +694,8 @@ export function getVisibleProfile(id, viewerId) {
   if (cs.showPhoto || mutual) view.photoUrl = p.photoUrl;
   if (mutual) {
     view.intention = p.intention;
+    // Social/website links are contact details: only after mutual consent.
+    if (p.links && Object.keys(p.links).length) view.links = p.links;
     view.prefs = { localRemote: p.prefs.localRemote, formats: p.prefs.formats, languages: p.prefs.languages };
   }
   view.mutual = mutual;

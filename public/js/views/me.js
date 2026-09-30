@@ -10,7 +10,7 @@ import { briefPill } from './brief.js';
 import {
   el, esc, card, pageShell, errorBanner, toast, announce, avatarFor,
   chipGroup, chipSingle, field, textInput, textArea, selectInput,
-  confirmDialog, emptyState, loading, withView,
+  confirmDialog, emptyState, loading, withView, linksList,
 } from '../ui.js';
 import { navigate } from '../router.js';
 
@@ -117,6 +117,8 @@ export async function renderMe(root, ctx) {
     const avail = prefs.availability || (profile.connectionPrefs || {}).availability;
     if (avail) meta2.push(`Usually free: ${avail}`);
     if (meta2.length) summary.appendChild(el(`<p class="request-meta">${esc(meta2.join(' · '))}</p>`));
+    const ownLinks = linksList(profile.links);
+    if (ownLinks) summary.appendChild(ownLinks);
     summary.appendChild(el(`<div class="btn-row"><a class="btn btn-secondary" href="#/me/edit">Edit profile</a>
       <a class="btn btn-ghost" href="#/saved">Saved items</a></div>`));
     shell.body.appendChild(summary);
@@ -401,6 +403,23 @@ export async function renderProfileEdit(root, ctx) {
       field('Photo URL', photo, { id: 'ed-photo', hint: 'Optional. Never required.' }),
     );
 
+    // Links — optional website/social links, revealed only after mutual consent.
+    s = section('Links');
+    const existingLinks = profile.links || {};
+    const linkWebsite = textInput({ id: 'ed-link-website', value: existingLinks.website || '', type: 'url', maxLength: 200, placeholder: 'https://…' });
+    const linkInstagram = textInput({ id: 'ed-link-instagram', value: existingLinks.instagram || '', type: 'url', maxLength: 200, placeholder: 'https://instagram.com/…' });
+    const linkX = textInput({ id: 'ed-link-x', value: existingLinks.x || '', type: 'url', maxLength: 200, placeholder: 'https://x.com/…' });
+    const linkLinkedin = textInput({ id: 'ed-link-linkedin', value: existingLinks.linkedin || '', type: 'url', maxLength: 200, placeholder: 'https://linkedin.com/in/…' });
+    s.append(
+      field('Website', linkWebsite, { id: 'ed-link-website' }),
+      field('Instagram', linkInstagram, { id: 'ed-link-instagram' }),
+      field('X (Twitter)', linkX, { id: 'ed-link-x' }),
+      field('LinkedIn', linkLinkedin, {
+        id: 'ed-link-linkedin',
+        hint: 'Optional. Only shared after you both agree to connect — never shown before mutual consent.',
+      }),
+    );
+
     const btnRow = el(`<div class="btn-row"></div>`);
     const save = el(`<button type="submit" class="btn btn-primary">Save changes</button>`);
     const cancel = el(`<a class="btn btn-ghost" href="#/me">Cancel</a>`);
@@ -444,6 +463,13 @@ export async function renderProfileEdit(root, ctx) {
         if (photo.value.trim()) patch.photoUrl = photo.value.trim();
         if (pOther.value.trim()) patch.practicesOther = pOther.value.trim();
         if (iOther.value.trim()) patch.intentionsOther = iOther.value.trim();
+        // Links: send the full set (empty object clears them).
+        const linksPatch = {};
+        if (linkWebsite.value.trim()) linksPatch.website = linkWebsite.value.trim();
+        if (linkInstagram.value.trim()) linksPatch.instagram = linkInstagram.value.trim();
+        if (linkX.value.trim()) linksPatch.x = linkX.value.trim();
+        if (linkLinkedin.value.trim()) linksPatch.linkedin = linkLinkedin.value.trim();
+        patch.links = linksPatch;
         await updateProfile(profileId, patch);
         toast('Profile updated.');
         navigate('#/me');

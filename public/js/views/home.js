@@ -13,8 +13,10 @@ import {
 
 export async function renderHome(root, ctx) {
   const profileId = get('profileId');
-  if (!profileId) {
-    // Not signed in — the classic welcome landing still owns this route.
+  if (!profileId || get('betaEntered') === false) {
+    // Not signed in — or beta not entered on this device (a stored profile
+    // id alone must not skip the invite gate). The welcome view owns the
+    // code entry screen.
     await renderWelcome(root, ctx);
     return;
   }
