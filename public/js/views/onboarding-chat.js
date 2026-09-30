@@ -13,12 +13,17 @@
 
 import { renderChat } from './chat.js';
 import * as api from '../api.js';
-import { setProfileId } from '../state.js';
-import { el } from '../ui.js';
+import { get, setProfileId } from '../state.js';
+import { navigate } from '../router.js';
 
 const OB_SESSION_KEY = 'seren.obSessionId';
 
 export async function renderOnboardingChat(mount) {
+  // Already have a profile on this device — the guide lives at home.
+  if (get('profileId')) {
+    navigate('/');
+    return;
+  }
   await renderChat(mount, {
     profileId: null,
     sessionKey: OB_SESSION_KEY,
@@ -36,11 +41,4 @@ export async function renderOnboardingChat(mount) {
     },
   });
 
-  // Escape hatch for anyone who prefers the form: keep it quiet and small.
-  const fallback = el(
-    `<p style="text-align:center;margin:0.75rem 0 0;font-size:0.85rem;opacity:0.75">
-       <a href="#/onboarding?mode=classic">Prefer the classic form instead?</a>
-     </p>`,
-  );
-  mount.appendChild(fallback);
 }
