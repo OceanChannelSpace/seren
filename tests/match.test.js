@@ -217,8 +217,8 @@ test('findMatches excludes candidates who have not opted into introductions', as
 
 // ---------- buildPairReasons ----------
 
-test('buildPairReasons: forRequester keeps scored reasons; forCandidate names a concrete link', async () => {
-  const { buildPairReasons } = await import('../src/match.js');
+test('buildPairReasons: forRequester keeps scored reasons; forCandidate is generic when a concrete link exists', async () => {
+  const { buildPairReasons, PAIR_REASON_FALLBACK } = await import('../src/match.js');
   const requester = profile(1, {
     intention: 'I want to support someone moving through grief with steady presence.',
   });
@@ -231,7 +231,11 @@ test('buildPairReasons: forRequester keeps scored reasons; forCandidate names a 
     requester, candidate, scored, 'I can offer a calm listening space around grief each week.',
   );
   assert.deepEqual(forRequester, ['You both care about Meditation.']);
-  assert.ok(forCandidate.includes('grief'), `concrete link named: ${forCandidate}`);
+  // Privacy: neither party's raw words are quoted to the other side, even when
+  // a concrete link exists. The link is signaled generically instead.
+  assert.ok(!forCandidate.includes('grief'), `no verbatim quote: ${forCandidate}`);
+  assert.ok(!/“[^”]+”/.test(forCandidate), `no quoted wording: ${forCandidate}`);
+  assert.notEqual(forCandidate, PAIR_REASON_FALLBACK, 'concrete link still detected');
   assert.ok(!/mutual interest|shared history|perfect match/i.test(forCandidate));
 });
 
@@ -258,7 +262,7 @@ test('scoreCandidate: shared-keyword reason reads naturally with quoted words', 
   assert.ok(/ and /.test(kw) || (kw.match(/“/g) || []).length <= 2, `natural list joining: ${kw}`);
 });
 
-test('buildPairReasons: forCandidate avoids nested offer phrasing and mid-word truncation', async () => {
+test('buildPairReasons: forCandidate never quotes raw wording, however long the offer', async () => {
   const { buildPairReasons } = await import('../src/match.js');
   const requester = profile(1, {
     intention: 'I want to support someone moving through grief with steady presence.',
@@ -268,13 +272,10 @@ test('buildPairReasons: forCandidate avoids nested offer phrasing and mid-word t
     practices: ['meditation'],
   });
   const longOffer = 'I can offer a calm, grounding presence and weekly happiness practices for anyone walking beside me on this path forward together';
-  assert.ok(longOffer.length > 90, 'fixture offer must exceed the truncation limit');
+  assert.ok(longOffer.length > 90, 'fixture offer must exceed the old truncation limit');
   const { forCandidate } = buildPairReasons(requester, candidate, { reasons: [] }, longOffer);
-  assert.ok(!/your offer of “/i.test(forCandidate), `no redundant offer nesting: ${forCandidate}`);
-  assert.ok(forCandidate.includes('…'), `long offer is truncated: ${forCandidate}`);
-  const beforeEllipsis = forCandidate.split('…')[0];
-  assert.ok(!/[a-z]…?$/.test(beforeEllipsis.slice(-12)) || /\s$/.test(beforeEllipsis) || /[a-z]{4,}$/.test(beforeEllipsis),
-    `truncation lands on a word boundary: ${forCandidate}`);
-  // The shared word is quoted, not dumped bare.
-  assert.ok(/“grief”/.test(forCandidate), `shared word quoted: ${forCandidate}`);
+  // No part of the requester's offer may be quoted to the candidate.
+  assert.ok(!forCandidate.includes('calm, grounding'), `no offer leak: ${forCandidate}`);
+  assert.ok(!/“[^”]+”/.test(forCandidate), `no quoted wording: ${forCandidate}`);
+  assert.ok(!/grief/.test(forCandidate), `no verbatim need wording: ${forCandidate}`);
 });

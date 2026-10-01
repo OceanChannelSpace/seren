@@ -267,7 +267,7 @@ test('buildProposals: shape and privacy via visibleProfile', async () => {
   assert.ok(p.suggestedFirst.length > 20);
   assert.equal(p.suggestedFirstStep, p.suggestedFirst);
   assert.ok(typeof p.forCandidate === 'string' && p.forCandidate.length > 0);
-  assert.ok(p.forCandidate.includes('meditation'), 'concrete link to candidate intent is named');
+  assert.ok(!p.forCandidate.includes('morning sits'), 'never quotes the candidate intent verbatim');
   assert.equal(p.candidateSharedText, '');
   assert.ok(!('email' in p.candidate), 'candidate must not leak email');
 });

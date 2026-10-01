@@ -38,13 +38,13 @@ function agentCard(entry) {
   const head = el(`<div class="person-head"></div>`);
   head.appendChild(avatarFor(a.name || 'Agent'));
   const who = el(`<div class="who"></div>`);
-  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span></h3>`));
+  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span> <span class="pill pill-muted">unverified</span></h3>`));
   if (a.operatorName) who.appendChild(el(`<p class="person-sub">Registered by ${esc(a.operatorName)}</p>`));
   head.appendChild(who);
   c.appendChild(head);
 
   if (a.description) c.appendChild(el(`<p>${esc(a.description)}</p>`));
-  if (a.trustNote) c.appendChild(el(`<p class="field-hint">Operator attests: “${esc(a.trustNote)}”</p>`));
+  if (a.trustNote) c.appendChild(el(`<p class="field-hint">Unverified operator declaration: “${esc(a.trustNote)}”</p>`));
 
   if (Array.isArray(entry.reasons) && entry.reasons.length) {
     const ul = el(`<ul class="reason-list"></ul>`);
@@ -56,6 +56,7 @@ function agentCard(entry) {
 
   const caps = (a.capabilities || []).slice(0, 4);
   if (caps.length) {
+    c.appendChild(el(`<p class="field-hint" style="margin-bottom:0.25rem">Operator-declared capabilities (not verified):</p>`));
     const row = el(`<div class="chip-row"></div>`);
     for (const label of caps) row.appendChild(el(`<span class="chip chip-static">${esc(label)}</span>`));
     c.appendChild(row);
@@ -263,7 +264,7 @@ export async function renderDiscover(root, ctx) {
 
       if (agentEntries.length) {
         resultsWrap.appendChild(el(`<h2 style="margin-top:2.25rem">Intelligent agents</h2>`));
-        resultsWrap.appendChild(el(`<p class="field-hint">AI participants registered by members — always labeled, never presented as human. <a href="#/agents">Browse the registry</a></p>`));
+        resultsWrap.appendChild(el(`<p class="field-hint">AI participants registered by members — always labeled, never presented as human, and never verified by the platform. <a href="#/agents">Browse the registry</a></p>`));
         const agentGrid = el(`<div class="match-grid"></div>`);
         for (const entry of agentEntries) agentGrid.appendChild(agentCard(entry));
         resultsWrap.appendChild(agentGrid);
@@ -318,6 +319,25 @@ export async function renderDiscover(root, ctx) {
       });
       pb.appendChild(resumeBtn);
       pauseWrap.appendChild(pb);
+    }
+    // First-run serendipity disclosure: the wild card is permissioned, so the
+    // permission has to be understandable — not a buried toggle. Shown once.
+    const cs = me.consentSettings || {};
+    let noticeSeen = true;
+    try { noticeSeen = localStorage.getItem(`${STORAGE_PREFIX}.serendipityNoticeSeen`) === '1'; } catch { /* noop */ }
+    if (cs.serendipity !== false && !noticeSeen) {
+      const nb = el(`
+        <div class="notice-banner" role="status">
+          <p><strong>A note on wild cards.</strong> Discover sometimes includes one clearly-labeled wild card — a genuine member outside your obvious overlaps, offered to widen the circle. You can turn this off any time in <a href="#/me">Me → Discovery</a>.</p>
+        </div>`);
+      const okBtn = el(`<button type="button" class="btn btn-secondary btn-small">Got it</button>`);
+      okBtn.addEventListener('click', () => {
+        try { localStorage.setItem(`${STORAGE_PREFIX}.serendipityNoticeSeen`, '1'); } catch { /* noop */ }
+        nb.remove();
+        announce('Notice dismissed.');
+      });
+      nb.appendChild(okBtn);
+      pauseWrap.appendChild(nb);
     }
   } catch (e) {
     body.querySelector('.loading-block')?.remove();

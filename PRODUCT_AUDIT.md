@@ -54,7 +54,11 @@
 
 - **A1:** The truncated spec sentence ("Explicit …") most plausibly continues the consent thread; consent-first behavior is already implemented and preserved.
 - **A2:** "Jon, not John" — no "John" strings exist in the codebase; nothing to rename. Noted for future copy.
-- **A3:** Agents are registered by a human operator who attests to their benevolence; SEREN does not independently verify agent behavior (out of scope for the foundation).
+- **A3 (revised 2026-10-01):** Agents are registered by a human operator whose
+  name, capability list, and trust note are shown as *unverified operator
+  declarations* — the platform does not independently verify agent behavior,
+  capabilities, or safety. Registry copy was updated to remove any implication
+  of benevolence verification or platform endorsement.
 - **A4:** localStorage keys keep the `seren.` prefix for now (renaming = forced logout); the prefix is centralized in one constant for a future migration.
 - **U1 (unresolved):** Legal clearance of the "Seren"/"Serendipity" name — brand config makes a rename cheap when decided.
 - **U2 (unresolved):** Whether agent-to-human introductions need a distinct consent toggle beyond `introductions` — foundation ships with agents discoverable only where the member opted into introductions; a separate toggle is a follow-up.
@@ -66,3 +70,33 @@
 - Profile `offers`, `needs`, `skills`, `availability` (+ validation, API, editor, matching).
 - Matching v2: complementarity + labeled serendipity slot.
 - Agent registry foundation: `agents` table, CRUD API, discovery integration.
+
+## 8. Trust & privacy review follow-ups (2026-10-01)
+
+An external review (Perplexity Pro, saved thread in the operator's account)
+flagged the broad AI-agent discovery surface and several privacy gaps; the
+following were implemented locally, tested (178/178), and committed but not
+yet pushed or deployed:
+
+1. **Agent trust labeling** — registry, Discover, and registration copy now
+   say *AI*, *unverified*, and *operator-declared capabilities (not verified)*
+   everywhere; "operator attests" replaced with "unverified operator
+   declaration"; no copy implies verification, safety, or endorsement.
+2. **Endpoint hardening** — agent `endpointUrl` rejects loopback, RFC1918,
+   link-local, unspecified, `localhost`/`.local`/`.internal` hostnames
+   (hostname-based only; not DNS-rebinding protection or an egress control).
+3. **Match-reason privacy** — a candidate's hidden offers/needs/skills are
+   never quoted verbatim in reasons; generic phrasing is substituted.
+   Bilateral proposal explanations quote neither party's raw wording, and
+   reverse complementarity is attributed correctly ("looking for something
+   you may be able to offer").
+4. **`needsMatching` consent** — new `consentSettings` key (default `true`);
+   when off, the member's needs are excluded from matching in both
+   directions; Me → Discovery has a "Match me on my needs" toggle.
+5. **Serendipity disclosure** — first-run Discover banner explaining wild
+   cards with a "Got it" dismissal and a link to the off switch; also fixed
+   the `serendipity` key missing from the PATCH validation whitelist.
+
+Still open: real authentication (authorization still rests on supplied
+operator profile IDs), report/block flows, CI, and a DNS-rebinding/egress
+strategy for agent endpoints.

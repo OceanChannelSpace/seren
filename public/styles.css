@@ -875,6 +875,17 @@ select.input {
 }
 .pause-banner p { margin: 0; color: var(--mist); }
 
+/* ---------- notice banner (first-run disclosures) ---------- */
+.notice-banner {
+  background: rgba(125, 240, 196, 0.07);
+  border: 1px solid rgba(125, 240, 196, 0.35);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap;
+}
+.notice-banner p { margin: 0; color: var(--mist); }
+.notice-banner a { color: var(--seafoam); }
+
 /* ---------- bottom nav (mobile) ---------- */
 .bottom-nav { display: none; }
 .primary-nav .nav-icon { display: none; }

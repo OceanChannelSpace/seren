@@ -101,9 +101,22 @@ function sameRegion(a, b) {
  * @param {object} requester camelCase profile
  * @param {object} candidate camelCase profile
  * @param {string} intentionText free-text intention for keyword overlap
+ * @param {object} opts
+ *   - quoteCandidateFields: when false, reasons never quote the candidate's
+ *     raw offers/needs/skills wording (their practices view is hidden from
+ *     the viewer). Generic reasons are used instead.
+ *   - matchRequesterNeeds: when false, the requester's needs are not used
+ *     for matching at all (their `needsMatching` consent).
+ *   - matchCandidateNeeds: when false, the candidate's needs are not used
+ *     for matching (their `needsMatching` consent).
  * @returns {{score:number, reasons:string[], sharedPractices:string[], sharedIntentions:string[], sharedFormats:string[]}}
  */
-export function scoreCandidate(requester, candidate, intentionText = '') {
+export function scoreCandidate(requester, candidate, intentionText = '', opts = {}) {
+  const {
+    quoteCandidateFields = true,
+    matchRequesterNeeds = true,
+    matchCandidateNeeds = true,
+  } = opts || {};
   const reasons = [];
   let score = 0;
 
@@ -184,28 +197,50 @@ export function scoreCandidate(requester, candidate, intentionText = '') {
 
   // v7: complementarity — connection is not only similarity. What you need
   // against what they offer (and the reverse), plus shared capabilities.
-  const needOfferHits = complementaryMatches(requester.needs, candidate.offers).slice(0, 3);
+  // Privacy rules:
+  //  - A member's needs are only a matching surface when their `needsMatching`
+  //    consent is on (both directions).
+  //  - Reasons quote the *candidate's* raw wording only when their offers /
+  //    needs / skills are visible to the viewer; otherwise a generic reason
+  //    is used. The requester's own wording is always safe to echo back.
+  const needOfferHits = matchRequesterNeeds
+    ? complementaryMatches(requester.needs, candidate.offers).slice(0, 3)
+    : [];
   if (needOfferHits.length > 0) {
     score += 3 * needOfferHits.length;
-    reasons.push(
-      needOfferHits.length === 1
-        ? `They offer “${needOfferHits[0]}” — something you’re looking for.`
-        : `They offer ${needOfferHits.length} things you’re looking for, including “${needOfferHits[0]}”.`,
-    );
+    if (quoteCandidateFields) {
+      reasons.push(
+        needOfferHits.length === 1
+          ? `They offer “${needOfferHits[0]}” — something you’re looking for.`
+          : `They offer ${needOfferHits.length} things you’re looking for, including “${needOfferHits[0]}”.`,
+      );
+    } else {
+      reasons.push('They offer something you’re looking for.');
+    }
   }
-  const offerNeedHits = complementaryMatches(requester.offers, candidate.needs).slice(0, 3);
+  const offerNeedHits = matchCandidateNeeds
+    ? complementaryMatches(requester.offers, candidate.needs).slice(0, 3)
+    : [];
   if (offerNeedHits.length > 0) {
     score += 3 * offerNeedHits.length;
-    reasons.push(
-      offerNeedHits.length === 1
-        ? `You offer “${offerNeedHits[0]}” — something they’re looking for.`
-        : `You offer ${offerNeedHits.length} things they’re looking for, including “${offerNeedHits[0]}”.`,
-    );
+    if (quoteCandidateFields) {
+      reasons.push(
+        offerNeedHits.length === 1
+          ? `They’re looking for “${offerNeedHits[0]}” — something you may be able to offer.`
+          : `They’re looking for ${offerNeedHits.length} things you may be able to offer, including “${offerNeedHits[0]}”.`,
+      );
+    } else {
+      reasons.push('They’re looking for something you may be able to offer.');
+    }
   }
   const sharedSkills = complementaryMatches(requester.skills, candidate.skills).slice(0, 3);
   if (sharedSkills.length > 0) {
     score += 1 * sharedSkills.length;
-    reasons.push(`You share skills around ${quotedList(sharedSkills)}.`);
+    reasons.push(
+      quoteCandidateFields
+        ? `You share skills around ${quotedList(sharedSkills)}.`
+        : 'You share skills in common.',
+    );
   }
 
   if (reasons.length === 0) {
@@ -227,6 +262,9 @@ export function scoreCandidate(requester, candidate, intentionText = '') {
  *   - existingPairKeys: "minId:maxId" keys for non-withdrawn intros
  *   - blockedIds: Set of profile ids blocked in either direction
  *   - filters: {connectionType?, locality?, format?, practice?}
+ *   - quoteCandidateFieldsFor: (candidate) => boolean. When false for a
+ *     candidate, reasons never quote that candidate's raw offers/needs/skills
+ *     wording (their practices view is hidden from the requester).
  * @returns {Array<{candidate, score, reasons, sharedPractices, sharedIntentions, sharedFormats}>}
  */
 export function findMatches(requester, candidates, opts = {}) {
@@ -237,9 +275,11 @@ export function findMatches(requester, candidates, opts = {}) {
     existingPairKeys = new Set(),
     blockedIds = new Set(),
     filters = {},
+    quoteCandidateFieldsFor = null,
   } = opts;
 
   const reqId = requester.id;
+  const reqMatchesNeeds = requester.consentSettings?.needsMatching !== false;
   const results = [];
 
   for (const candidate of candidates || []) {
@@ -275,7 +315,13 @@ export function findMatches(requester, candidates, opts = {}) {
       if (candFormats.length && !candFormats.includes(filters.format)) continue;
     }
 
-    const scored = scoreCandidate(requester, candidate, intentionText);
+    const scored = scoreCandidate(requester, candidate, intentionText, {
+      quoteCandidateFields: typeof quoteCandidateFieldsFor === 'function'
+        ? quoteCandidateFieldsFor(candidate) !== false
+        : true,
+      matchRequesterNeeds: reqMatchesNeeds,
+      matchCandidateNeeds: candidate.consentSettings?.needsMatching !== false,
+    });
     results.push({ candidate, ...scored });
   }
 
@@ -323,13 +369,18 @@ export function findMatches(requester, candidates, opts = {}) {
  * @param {object} requester camelCase profile
  * @param {object} agent camelCase agent
  * @param {string} intentionText free-text intention for keyword overlap
+ * @param {object} opts { matchRequesterNeeds } — when false, the requester's
+ *   needs are not matched against agent capabilities.
  * @returns {{score:number, reasons:string[]}}
  */
-export function scoreAgent(requester, agent, intentionText = '') {
+export function scoreAgent(requester, agent, intentionText = '', opts = {}) {
+  const { matchRequesterNeeds = true } = opts || {};
   const reasons = [];
   let score = 0;
 
-  const needHits = complementaryMatches(requester.needs, agent.capabilities).slice(0, 3);
+  const needHits = matchRequesterNeeds
+    ? complementaryMatches(requester.needs, agent.capabilities).slice(0, 3)
+    : [];
   if (needHits.length > 0) {
     score += 3 * needHits.length;
     reasons.push(
@@ -358,14 +409,14 @@ export function scoreAgent(requester, agent, intentionText = '') {
  *
  * @param {object} requester camelCase profile
  * @param {object[]} agents camelCase agents
- * @param {object} opts { intentionText, limit }
+ * @param {object} opts { intentionText, limit, matchRequesterNeeds }
  * @returns {Array<{agent, score, reasons}>}
  */
-export function findAgentMatches(requester, agents, { intentionText = '', limit = 3 } = {}) {
+export function findAgentMatches(requester, agents, { intentionText = '', limit = 3, matchRequesterNeeds = true } = {}) {
   const results = [];
   for (const agent of agents || []) {
     if (!agent || agent.isHidden) continue;
-    const scored = scoreAgent(requester, agent, intentionText);
+    const scored = scoreAgent(requester, agent, intentionText, { matchRequesterNeeds });
     if (scored.score <= 0) continue;
     results.push({ agent, ...scored });
   }
@@ -381,24 +432,15 @@ export function findAgentMatches(requester, agents, { intentionText = '', limit 
 export const PAIR_REASON_FALLBACK =
   "Based on what they've shared, the specific benefit for them is still open — that's yours to discover together.";
 
-function truncateText(text, max = 90) {
-  const t = typeof text === 'string' ? text.trim() : '';
-  if (t.length <= max) return t;
-  // Break on a word boundary so we never leave a dangling fragment ("Happ…").
-  const cut = t.slice(0, max);
-  const lastSpace = cut.lastIndexOf(' ');
-  const base = lastSpace > Math.floor(max / 2) ? cut.slice(0, lastSpace) : cut;
-  return base.trimEnd() + '…';
-}
-
 /**
  * Reasons for each side of a potential introduction.
  * - forRequester: the existing explainable why-it-fits reasons, verbatim.
- * - forCandidate: derived ONLY from the candidate's stated intentions,
- *   practices, and interests plus the requester's stated offer/intention.
- *   A concrete link = shared keyword tokens between those two texts. With no
- *   concrete link, returns the honest fallback. Never invents mutual
- *   interest, shared history, or certainty.
+ * - forCandidate: derived ONLY from whether a concrete link exists between
+ *   the candidate's stated intentions/practices/interests and the requester's
+ *   stated offer/intention. The wording is deliberately generic — neither
+ *   party's raw words are ever quoted to the other side without their
+ *   explicit say-so. With no concrete link, returns the honest fallback.
+ *   Never invents mutual interest, shared history, or certainty.
  *
  * @param {object} requester camelCase profile
  * @param {object} candidate camelCase profile
@@ -422,11 +464,8 @@ export function buildPairReasons(requester, candidate, scored, requesterOffer = 
 
   let forCandidate = PAIR_REASON_FALLBACK;
   if (shared.length > 0) {
-    const offerBit = String(requesterOffer || '').trim()
-      ? ` — what you offer (“${truncateText(requesterOffer, 90)}”) speaks to that ground`
-      : '';
     forCandidate =
-      `They've mentioned ${quotedList(shared)} in what they're looking for${offerBit}.`;
+      'What they bring overlaps with themes from your own profile — this may speak to your current path.';
   }
   return { forRequester, forCandidate };
 }

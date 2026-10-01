@@ -67,6 +67,23 @@ eligible candidate (score > 0) is appended as a clearly-labeled wild card. It
 never displaces ranked results and never overrides consent gates
 (blocks, passes, pauses, existing pairs).
 
+**`needsMatching` consent:** when a member sets
+`consentSettings.needsMatching` to `false` (default `true`, toggleable in
+Me → Discovery settings as "Match me on my needs"), their needs are excluded
+from matching in both directions — their needs never score against others'
+offers, and others' needs never score against their offers. The flag is
+evaluated per side: the requester's setting and each candidate's setting
+apply independently.
+
+**Match-reason privacy:** reasons shown to the requester may quote the
+requester's own wording back to them, but never quote a candidate's hidden
+offers/needs/skills verbatim — generic phrasing is substituted ("something
+you're looking for", "something you may be able to offer"). The same rule
+applies to bilateral proposal explanations: neither party sees the other's
+raw field wording. Reverse complementarity (requester's offer ↔ candidate's
+need) is attributed as "looking for something you may be able to offer,"
+never "you offer X."
+
 **Intro note template:**
 `"You and {name} share {n} spiritual {interest|interests}{keyword-bit}. {first-name-requester}, {intention-echo}"` — keep it warm, one or two
 sentences. Backend generates it; frontend displays verbatim.
@@ -96,7 +113,7 @@ Base: `/api`. All JSON. Error shape:
 | GET | `/api/beta/status` | — | 200 `{beta:bool, entered:bool}` (always open, even in beta mode) | — |
 | POST | `/api/beta/enter` | `{code}` | 200 `{entered:true}` + `HttpOnly` beta cookie | 403 `beta_code_invalid` |
 | GET | `/api/discover?profileId=&agents=true` | query: profileId required; `agents=true` adds agent suggestions | 200 `{matches:[{profile,reasons,sharedPractices,sharedIntentions,sharedFormats,serendipity,saved}],agents:[{agent,reasons}]}` | 400, 404 |
-| POST | `/api/agents` | `{operatorProfileId,name,description,capabilities[],endpointUrl,trustNote}` | 201 agent (kind `ai`, operator attestation) | 400 `validation_error`, 404 (unknown operator) |
+| POST | `/api/agents` | `{operatorProfileId,name,description,capabilities[],endpointUrl,trustNote}` | 201 agent (kind `ai`, unverified operator declaration) | 400 `validation_error`, 404 (unknown operator) |
 | GET | `/api/agents` | — | 200 `{agents:[]}` (visible only) | — |
 | GET | `/api/agents/:id` | — | 200 agent | 404 `not_found` |
 | PATCH | `/api/agents/:id` | `{operatorProfileId,...fields}` | 200 agent | 400, 403 (non-operator), 404 |
@@ -109,19 +126,20 @@ Base: `/api`. All JSON. Error shape:
 | `id` | INTEGER PK AUTOINCREMENT | |
 | `name` | TEXT NOT NULL | 2–80 chars |
 | `kind` | TEXT NOT NULL DEFAULT 'ai' | extensible; only `ai` today |
-| `operator_profile_id` | INTEGER FK → profiles.id | the member who registers and attests |
+| `operator_profile_id` | INTEGER FK → profiles.id | the member who registers and declares |
 | `description` | TEXT NOT NULL DEFAULT '' | ≤ 500 chars |
 | `capabilities_json` | TEXT NOT NULL DEFAULT '[]' | free-text list, max 10, ≤80 chars each — matching surface |
-| `endpoint_url` | TEXT NOT NULL DEFAULT '' | optional, must be http(s) |
-| `trust_note` | TEXT NOT NULL DEFAULT '' | operator's benevolence attestation, ≤ 500 chars |
+| `endpoint_url` | TEXT NOT NULL DEFAULT '' | optional; http(s), no loopback/private/localhost |
+| `trust_note` | TEXT NOT NULL DEFAULT '' | operator's unverified declaration, ≤ 500 chars |
 | `verified` | INTEGER NOT NULL DEFAULT 0 | platform verification (reserved, future) |
 | `is_hidden` | INTEGER NOT NULL DEFAULT 0 | soft-hide; hidden agents leave listings and discovery |
 | `created_at` / `updated_at` | TEXT NOT NULL | ISO timestamps |
 
-**Agent rules:** agents are always labeled AI and never presented as human.
-Only the registering operator may edit or hide an agent (403 otherwise).
+**Agent rules:** agents are always labeled AI and unverified, and never presented
+as human. Only the registering operator may edit or hide an agent (403 otherwise).
 The platform does not independently verify agent behavior — the operator's
-`trustNote` is the attestation shown to members. Agent discovery is gated on
+`trustNote` is shown to members as an unverified declaration, never as a
+platform endorsement. Agent discovery is gated on
 the member's `ai_matching` consent: `/api/discover` suggests agents only with
 `?agents=true` and only when `consents.ai_matching !== false`; matching uses
 capability↔need token overlap and intention-language overlap.
@@ -150,6 +168,12 @@ plus v7: `"offers":[]`, `"needs":[]`, `"skills":[]` (free-text lists, max 10,
   Rationale: the product's core loop is introductions; a profile that cannot
   be introduced is a dead end. Documented, reversible.
 - `intention` on intro request: required, 5–500 chars.
+
+**`consentSettings` keys** (all optional booleans, defaults applied server-side):
+- `discoveryEnabled` (default `true`) — appear in Discover.
+- `paused` (default `false`) — pause all matching/introductions.
+- `serendipity` (default `true`) — allow the labeled wild-card match.
+- `needsMatching` (default `true`) — include my needs in matching.
 
 ## Frontend routes (hash routing)
 

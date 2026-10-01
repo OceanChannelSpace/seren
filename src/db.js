@@ -379,7 +379,8 @@ if (userVersion < 7) {
 
 // v8: agent registry — the relationship-network thesis covers humans,
 // communities, AND intelligent agents. Agents are first-class participants:
-// registered by a human operator who attests to their benevolence, with
+// registered by a human operator who makes an unverified declaration about
+// it via trustNote, with
 // declared capabilities so members can discover them by need. This is the
 // foundation; agent-to-agent flows and introduction requests to agents
 // are follow-ups (see PRODUCT_AUDIT.md).
@@ -435,6 +436,10 @@ export function defaultConsentSettings(legacy = {}) {
     // v7: controlled serendipity — one labeled wild card in Discover.
     // Default on; the member can turn it off in settings.
     serendipity: true,
+    // Review follow-up: needs are the most sensitive matching surface. When
+    // off, the member's needs are not used for matching in either direction
+    // (human or agent matching).
+    needsMatching: true,
   };
 }
 

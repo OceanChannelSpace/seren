@@ -1,6 +1,6 @@
 // Agents — the intelligent-agent registry.
 // AI participants registered by human members, discoverable alongside humans.
-// Always labeled AI; operator attestation shown on every card.
+// Always labeled AI and unverified; the operator's declaration is shown on every card.
 
 import { get } from '../state.js';
 import * as api from '../api.js';
@@ -15,18 +15,19 @@ function agentCardFull(a, profileId, onChanged) {
   const head = el(`<div class="person-head"></div>`);
   head.appendChild(avatarFor(a.name || 'Agent'));
   const who = el(`<div class="who"></div>`);
-  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span></h3>`));
+  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span> <span class="pill pill-muted">unverified</span></h3>`));
   if (a.operatorName) who.appendChild(el(`<p class="person-sub">Registered by ${esc(a.operatorName)}</p>`));
   head.appendChild(who);
   c.appendChild(head);
 
   if (a.description) c.appendChild(el(`<p>${esc(a.description)}</p>`));
   if (a.trustNote) {
-    c.appendChild(el(`<p class="field-hint">Operator attests: “${esc(a.trustNote)}”</p>`));
+    c.appendChild(el(`<p class="field-hint">Unverified operator declaration: “${esc(a.trustNote)}”</p>`));
   }
 
   const caps = (a.capabilities || []).slice(0, 10);
   if (caps.length) {
+    c.appendChild(el(`<p class="field-hint" style="margin-bottom:0.25rem">Operator-declared capabilities (not verified):</p>`));
     const row = el(`<div class="chip-row"></div>`);
     for (const label of caps) row.appendChild(el(`<span class="chip chip-static">${esc(label)}</span>`));
     c.appendChild(row);
@@ -64,7 +65,7 @@ function agentCardFull(a, profileId, onChanged) {
 function registerForm(profileId, onRegistered) {
   const c = card();
   c.appendChild(el(`<h3>Register an agent</h3>`));
-  c.appendChild(el(`<p class="field-hint" style="margin-top:0">Vouch for an AI you operate or trust. Your name appears as the attesting operator — the platform does not independently verify agent behavior.</p>`));
+  c.appendChild(el(`<p class="field-hint" style="margin-top:0">Register an AI you operate. Your name appears as the declaring operator — the platform does not independently verify agent behavior, capabilities, or safety. Everything here is shown to members as your unverified declaration.</p>`));
 
   const nameInput = textInput({ maxlength: 80, placeholder: 'Agent name' });
   const descInput = textArea({ maxlength: 500, placeholder: 'What does this agent do? A sentence or two.' });
@@ -76,7 +77,7 @@ function registerForm(profileId, onRegistered) {
   c.appendChild(field('Description', descInput, 'What members should expect.'));
   c.appendChild(field('Capabilities', capsInput, 'Comma-separated — used for matching against members’ needs.'));
   c.appendChild(field('Endpoint URL', urlInput, 'Optional. Must be http(s).'));
-  c.appendChild(field('Your attestation', trustInput, 'Optional. Your words, shown to every member who sees this agent.'));
+  c.appendChild(field('Your declaration', trustInput, 'Optional. Your personal statement, shown to every member as unverified — not a platform verification.'));
 
   const banner = errorBanner();
   c.appendChild(banner.node);
@@ -124,7 +125,7 @@ export async function renderAgents(root, ctx) {
       const data = await api.listAgents();
       const agents = data.agents || [];
       content.innerHTML = '';
-      content.appendChild(el(`<p class="field-hint" style="margin-top:0">Agents are AI participants — always labeled, never presented as human. Members discover them by need and capability.</p>`));
+      content.appendChild(el(`<p class="field-hint" style="margin-top:0">Agents are AI participants — always labeled, never presented as human. Nothing in the registry is verified by the platform: names, capabilities, and declarations come from the registering operator. Members discover them by need and capability.</p>`));
       if (!agents.length) {
         content.appendChild(emptyState({
           title: 'No agents registered yet.',

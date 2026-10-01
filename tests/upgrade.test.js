@@ -171,9 +171,10 @@ test('scoreCandidate rewards offers-to-needs complementarity with reasons', () =
 test('scoreCandidate rewards the reverse direction (your offers ↔ their needs)', () => {
   const requester = matchProfile(1, { offers: ['garden help'] });
   const candidate = matchProfile(2, { needs: ['help in the garden'] });
-  const { reasons } = scoreCandidate(requester, candidate);
-  assert.ok(reasons.some((r) => r.startsWith('You offer')),
-    'reason should describe your offer matching their need');
+  const { score, reasons } = scoreCandidate(requester, candidate);
+  assert.ok(score >= 3, `expected complementarity score, got ${score}`);
+  assert.ok(reasons.some((r) => r.startsWith('They’re looking for')),
+    `reason should attribute the need to them, not quote it as your offer: ${JSON.stringify(reasons)}`);
 });
 
 test('scoreCandidate rewards shared skills with reasons', () => {
@@ -409,4 +410,119 @@ test('GET /api/discover marks the wild card in its response', async () => {
   const wilds = json.matches.filter((m) => m.serendipity === true);
   assert.equal(wilds.length, 1, 'exactly one wild card appended');
   assert.ok(wilds[0].reasons.some((r) => r.toLowerCase().includes('wild card')));
+});
+
+// ---------- external review follow-ups (trust & privacy) ----------
+
+test('POST /api/agents rejects non-public endpoint hosts', async () => {
+  const op = await createProfile({ name: 'Op Endpoint' });
+  for (const url of [
+    'http://localhost:4000/agent',
+    'http://127.0.0.1/agent',
+    'http://10.0.0.5/agent',
+    'http://192.168.1.10/agent',
+    'http://169.254.169.254/agent',
+    'http://mybox.local/agent',
+  ]) {
+    const { status, json } = await api('POST', '/api/agents', {
+      operatorProfileId: op.id, name: `E-${Math.abs(hashStr(url))}`, endpointUrl: url,
+    });
+    assert.equal(status, 400, `should reject ${url}`);
+    assert.ok(json.error.details.some((d) => d.field === 'endpointUrl'), url);
+  }
+  const { status: ok } = await api('POST', '/api/agents', {
+    operatorProfileId: op.id, name: 'E-public', endpointUrl: 'https://agents.example.org/chat',
+  });
+  assert.equal(ok, 201, 'public https endpoint accepted');
+});
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}
+
+test('PATCH /api/profiles/:id accepts serendipity and needsMatching consent settings', async () => {
+  const p = await createProfile({ name: 'Consent Keys' });
+  const { status, json } = await api('PATCH', `/api/profiles/${p.id}`, {
+    consentSettings: { serendipity: false, needsMatching: false },
+  });
+  assert.equal(status, 200, `expected 200, got ${JSON.stringify(json)}`);
+  assert.equal(json.consentSettings.serendipity, false);
+  assert.equal(json.consentSettings.needsMatching, false);
+});
+
+test('scoreCandidate: quoteCandidateFields=false keeps score, generalizes reasons', () => {
+  const requester = matchProfile(1, {
+    needs: ['a tarot reading'], offers: ['help moving house'], skills: ['deep listening'],
+  });
+  const candidate = matchProfile(2, {
+    offers: ['tarot readings for friends'], needs: ['help in the garden'], skills: ['listening circles'],
+  });
+  const quoted = scoreCandidate(requester, candidate);
+  const generic = scoreCandidate(requester, candidate, '', { quoteCandidateFields: false });
+  assert.equal(generic.score, quoted.score, 'same score either way');
+  assert.ok(quoted.reasons.some((r) => r.includes('tarot readings for friends')), 'quoted variant names the offer');
+  assert.ok(!generic.reasons.some((r) => r.includes('tarot readings for friends')), 'no verbatim candidate offer');
+  assert.ok(!generic.reasons.some((r) => r.includes('help in the garden')), 'no verbatim candidate need');
+  assert.ok(!generic.reasons.some((r) => r.includes('listening circles')), 'no verbatim candidate skill');
+  assert.ok(generic.reasons.some((r) => r.includes('something you’re looking for')), 'generic need→offer reason');
+  assert.ok(generic.reasons.some((r) => r.includes('something you may be able to offer')), 'generic offer→need reason');
+  assert.ok(generic.reasons.some((r) => r.includes('skills in common')), 'generic skills reason');
+});
+
+test('needsMatching=false removes needs from matching in both directions', () => {
+  const requester = matchProfile(1, {
+    needs: ['a tarot reading'], consentSettings: { needsMatching: false },
+  });
+  const candidate = matchProfile(2, { offers: ['tarot readings for friends'] });
+  const r1 = scoreCandidate(requester, candidate, '', { matchRequesterNeeds: false });
+  assert.equal(r1.score, 0, 'requester needs ignored → no complementarity score');
+
+  const req2 = matchProfile(1, { offers: ['garden help'] });
+  const cand2 = matchProfile(2, { needs: ['help in the garden'] });
+  const r2 = scoreCandidate(req2, cand2, '', { matchCandidateNeeds: false });
+  assert.equal(r2.score, 0, 'candidate needs ignored → no complementarity score');
+});
+
+test('findMatches honors needsMatching consent on both sides', () => {
+  const base = (id, overrides) => ({
+    ...matchProfile(id, overrides),
+    consents: { introductions: true, community_visible: true },
+  });
+  const requester = base(1, { needs: ['a tarot reading'], consentSettings: { needsMatching: false } });
+  const candidate = base(2, { offers: ['tarot readings for friends'] });
+  const ms = findMatches(requester, [candidate], {});
+  assert.equal(ms.length, 1);
+  assert.equal(ms[0].score, 0, 'opted-out need contributes nothing');
+  assert.ok(!ms[0].reasons.some((r) => r.includes('looking for')), 'no need-based reason');
+});
+
+test('findAgentMatches honors needsMatching=false', () => {
+  const requester = matchProfile(1, {
+    needs: ['dream interpretation'], consentSettings: { needsMatching: false },
+  });
+  const agent = { id: 1, name: 'Oneiro', capabilities: ['dream interpretation'], description: '', isHidden: false };
+  const ms = findAgentMatches(requester, [agent], { matchRequesterNeeds: false });
+  assert.equal(ms.length, 0, 'no capability-based suggestion when needs matching is off');
+});
+
+test('findMatches quoteCandidateFieldsFor=false generalizes candidate quotes', () => {
+  const base = (id, overrides) => ({
+    ...matchProfile(id, overrides),
+    consents: { introductions: true, community_visible: true },
+  });
+  const requester = base(1, { needs: ['a tarot reading'] });
+  const candidate = base(2, { offers: ['tarot readings for friends'] });
+  const ms = findMatches(requester, [candidate], { quoteCandidateFieldsFor: () => false });
+  assert.equal(ms.length, 1);
+  assert.ok(ms[0].score >= 3, 'still scores');
+  assert.ok(!ms[0].reasons.some((r) => r.includes('tarot readings for friends')), 'no verbatim quote');
+  assert.ok(ms[0].reasons.some((r) => r.includes('something you’re looking for')), 'generic reason used');
+});
+
+test('defaultConsentSettings includes needsMatching=true', async () => {
+  const { defaultConsentSettings } = await import('../src/db.js');
+  assert.equal(defaultConsentSettings().needsMatching, true);
+  assert.equal(defaultConsentSettings().serendipity, true);
 });

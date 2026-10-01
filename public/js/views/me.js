@@ -230,6 +230,7 @@ export async function renderMe(root, ctx) {
     dsec.appendChild(toggleRow('Appear in Discover', 'Other members can find you in curated Discover suggestions.', cs.discoveryEnabled !== false, (v) => patchSettings({ discoveryEnabled: v })));
     dsec.appendChild(toggleRow('Pause discovery', 'Pausing hides you from Discover and new requests. Existing connections stay exactly as they are.', cs.paused === true, (v) => patchSettings({ paused: v })));
     dsec.appendChild(toggleRow('Serendipity', 'Occasionally include one clearly-labeled wild card in your Discover suggestions — someone genuine, outside your obvious overlaps.', cs.serendipity !== false, (v) => patchSettings({ serendipity: v })));
+    dsec.appendChild(toggleRow('Match me on my needs', 'When on, your stated needs are matched against what others offer — members and AI agents alike. Turn off to keep your needs out of matching entirely.', cs.needsMatching !== false, (v) => patchSettings({ needsMatching: v })));
     shell.body.appendChild(discoveryCard);
 
     const reqCard = card([el(`<div class="settings-section"><h3>Requests & messages</h3></div>`)]);

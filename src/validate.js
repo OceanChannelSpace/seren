@@ -210,6 +210,8 @@ const CONSENT_SETTING_KEYS = [
   'messagesAfterMutual', 'intentionalRequests', 'groupInvites', 'eventInvites',
   'collaborationRequests', 'showPractices', 'showRegion', 'showPhoto',
   'discoveryEnabled', 'paused', 'notifications',
+  // v7: controlled serendipity + needs-based matching consent.
+  'serendipity', 'needsMatching',
 ];
 
 function checkConsentSettings(errors, value) {
@@ -333,8 +335,8 @@ export const LINK_KEYS = ['website', 'instagram', 'x', 'linkedin'];
 /**
  * Validate an agent-registry payload.
  * Create requires operatorProfileId + name; update validates only what's present.
- * The operator attests to the agent's benevolence via trustNote — the platform
- * does not independently verify agent behavior (see PRODUCT_AUDIT.md A3).
+ * The operator makes an unverified declaration about the agent via trustNote —
+ * the platform does not independently verify agent behavior (see PRODUCT_AUDIT.md A3).
  */
 export function validateAgentInput(body, { isUpdate = false } = {}) {
   const errors = [];
@@ -363,15 +365,47 @@ export function validateAgentInput(body, { isUpdate = false } = {}) {
       if (raw.length > 500) {
         push(errors, 'endpointUrl', 'endpointUrl must be at most 500 characters');
       } else {
-        let protocol = '';
-        try { protocol = new URL(raw).protocol; } catch { /* invalid */ }
-        if (protocol !== 'http:' && protocol !== 'https:') {
+        let parsed = null;
+        try { parsed = new URL(raw); } catch { /* invalid */ }
+        if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
           push(errors, 'endpointUrl', 'endpointUrl must be a valid http(s) URL');
+        } else if (isNonPublicHostname(parsed.hostname)) {
+          push(errors, 'endpointUrl', 'endpointUrl must point to a public host (no localhost, private, or internal addresses)');
         }
       }
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Hostname guard for agent endpoint URLs: the registry lists endpoints for
+ * humans to visit, but a hostile or careless URL could target internal
+ * infrastructure (SSRF-style). Reject loopback, private-range, link-local,
+ * and reserved hostnames. This is hostname-based, not DNS-based — a final
+ * defense, not a substitute for egress controls if endpoints are ever
+ * fetched server-side.
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function isNonPublicHostname(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/\.$/, '');
+  if (!h) return true;
+  if (h === 'localhost') return true;
+  if (h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.invalid')) return true;
+  // IPv4 literal checks.
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 127) return true; // loopback
+    if (a === 10) return true; // private
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 169 && b === 254) return true; // link-local
+    if (a === 0) return true; // unspecified
+  }
+  if (h === '::1' || h === '::') return true; // IPv6 loopback/unspecified
+  return false;
 }
 
 /**

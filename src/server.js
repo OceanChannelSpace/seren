@@ -360,6 +360,13 @@ app.get('/api/discover', (req, res) => {
     existingPairKeys: getNonWithdrawnPairKeys(),
     blockedIds,
     filters,
+    // Privacy: never quote a candidate's raw offers/needs/skills wording in
+    // reasons when those fields are hidden from the requester. Generic
+    // reasons are used instead (see match.js).
+    quoteCandidateFieldsFor: (cand) => {
+      const cs = cand.consentSettings || {};
+      return cs.showPractices !== false || hasMutualConnection(profile.id, cand.id);
+    },
   });
 
   const savedKeys = getSavedKeys(profile.id);
@@ -368,7 +375,11 @@ app.get('/api/discover', (req, res) => {
   // member's ai_matching consent — AI discovery is opt-in, like all matching.
   let agentMatches = [];
   if (req.query.agents === 'true' && profile.consents?.ai_matching !== false) {
-    agentMatches = findAgentMatches(profile, listAgents(), { intentionText, limit: 3 })
+    agentMatches = findAgentMatches(profile, listAgents(), {
+      intentionText,
+      limit: 3,
+      matchRequesterNeeds: profile.consentSettings?.needsMatching !== false,
+    })
       .map((m) => ({ agent: m.agent, reasons: m.reasons }));
   }
 
@@ -388,9 +399,9 @@ app.get('/api/discover', (req, res) => {
 
 // --- agent registry (intelligent agents as discoverable participants) ---
 
-// Register an agent. The operator (a member profile) attests to the agent's
-// benevolence via trustNote; the platform does not independently verify
-// agent behavior (see PRODUCT_AUDIT.md A3).
+// Register an agent. The operator (a member profile) makes an unverified
+// declaration about the agent via trustNote; the platform does not
+// independently verify agent behavior (see PRODUCT_AUDIT.md A3).
 app.post('/api/agents', (req, res) => {
   const { ok, errors } = validateAgentInput(req.body, { isUpdate: false });
   if (!ok) return validationErr(res, errors);
