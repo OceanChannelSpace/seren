@@ -108,6 +108,13 @@ export async function renderMe(root, ctx) {
     if (pChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Practices</h3>`)); summary.appendChild(pChips); }
     const iChips = chipRow((profile.intentions || []).map(intentionLabel));
     if (iChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Intentions</h3>`)); summary.appendChild(iChips); }
+    // v7: offers / needs / skills — the outward-facing matching surface.
+    const oChips = chipRow(profile.offers || []);
+    if (oChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Offers</h3>`)); summary.appendChild(oChips); }
+    const nChips = chipRow(profile.needs || []);
+    if (nChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Looking for</h3>`)); summary.appendChild(nChips); }
+    const sChips = chipRow(profile.skills || []);
+    if (sChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Skills</h3>`)); summary.appendChild(sChips); }
     const prefs = profile.prefs || {};
     const fmtChips = chipRow((prefs.formats || []).map(formatLabel));
     if (fmtChips) { summary.appendChild(el(`<h3 class="detail-section" style="font-size:0.85rem">Ways to connect</h3>`)); summary.appendChild(fmtChips); }
@@ -222,6 +229,7 @@ export async function renderMe(root, ctx) {
     const dsec = discoveryCard.querySelector('.settings-section');
     dsec.appendChild(toggleRow('Appear in Discover', 'Other members can find you in curated Discover suggestions.', cs.discoveryEnabled !== false, (v) => patchSettings({ discoveryEnabled: v })));
     dsec.appendChild(toggleRow('Pause discovery', 'Pausing hides you from Discover and new requests. Existing connections stay exactly as they are.', cs.paused === true, (v) => patchSettings({ paused: v })));
+    dsec.appendChild(toggleRow('Serendipity', 'Occasionally include one clearly-labeled wild card in your Discover suggestions — someone genuine, outside your obvious overlaps.', cs.serendipity !== false, (v) => patchSettings({ serendipity: v })));
     shell.body.appendChild(discoveryCard);
 
     const reqCard = card([el(`<div class="settings-section"><h3>Requests & messages</h3></div>`)]);
@@ -371,6 +379,18 @@ export async function renderProfileEdit(root, ctx) {
       field('In your own words', iText, { id: 'ed-intention-text', hint: '10–500 characters. Shared when you’re introduced.' }),
     );
 
+    // Offers & needs — the outward-facing matching surface (v7).
+    // Free-text, comma-separated; matching looks for complementary fits.
+    s = section('What you offer & need');
+    const offers = textInput({ id: 'ed-offers', value: (profile.offers || []).join(', '), maxLength: 800 });
+    const needs = textInput({ id: 'ed-needs', value: (profile.needs || []).join(', '), maxLength: 800 });
+    const skills = textInput({ id: 'ed-skills', value: (profile.skills || []).join(', '), maxLength: 800 });
+    s.append(
+      field('Offers', offers, { id: 'ed-offers', hint: 'What you can give — e.g. tarot readings, a listening ear, garden help. Comma-separated, up to 10.' }),
+      field('Looking for', needs, { id: 'ed-needs', hint: 'What would help you right now. Comma-separated, up to 10.' }),
+      field('Skills', skills, { id: 'ed-skills', hint: 'Things you’re good at — facilitation, cooking, coding. Comma-separated, up to 10.' }),
+    );
+
     // Connection
     s = section('How you connect');
     const formats = metaList('connectionFormats');
@@ -438,6 +458,24 @@ export async function renderProfileEdit(root, ctx) {
       if (intentionText.length < 10 || intentionText.length > 500) { banner.show('“In your own words” must be 10–500 characters.'); return; }
       const langsArr = langs.value.split(',').map((x) => x.trim()).filter(Boolean).slice(0, 10);
       if (langsArr.some((l) => l.length > 40)) { banner.show('Each language must be under 40 characters.'); return; }
+      // v7: free-text lists — parse, cap, and length-check client-side (server re-validates).
+      const parseList = (input, label) => {
+        const items = input.value.split(',').map((x) => x.trim()).filter(Boolean);
+        if (items.length > 10) { banner.show(`${label}: at most 10 items, comma-separated.`); return null; }
+        if (items.some((x) => x.length > 80)) { banner.show(`${label}: each item must be under 80 characters.`); return null; }
+        const seen = new Set();
+        for (const x of items) {
+          if (seen.has(x.toLowerCase())) { banner.show(`${label}: “${x}” is listed twice.`); return null; }
+          seen.add(x.toLowerCase());
+        }
+        return items;
+      };
+      const offersArr = parseList(offers, 'Offers');
+      if (!offersArr) return;
+      const needsArr = parseList(needs, 'Looking for');
+      if (!needsArr) return;
+      const skillsArr = parseList(skills, 'Skills');
+      if (!skillsArr) return;
 
       const original = save.textContent;
       save.disabled = true; save.classList.add('btn-loading'); save.textContent = 'Saving…';
@@ -470,6 +508,10 @@ export async function renderProfileEdit(root, ctx) {
         if (linkX.value.trim()) linksPatch.x = linkX.value.trim();
         if (linkLinkedin.value.trim()) linksPatch.linkedin = linkLinkedin.value.trim();
         patch.links = linksPatch;
+        // v7: offers / needs / skills — always sent (empty array clears).
+        patch.offers = offersArr;
+        patch.needs = needsArr;
+        patch.skills = skillsArr;
         await updateProfile(profileId, patch);
         toast('Profile updated.');
         navigate('#/me');

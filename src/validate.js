@@ -286,12 +286,93 @@ export function validateProfileInput(body, { isUpdate = false } = {}) {
   }
   // v5: optional social/website links — validated when present.
   if (body.links !== undefined) checkLinks(errors, body.links);
+  // v7: structured offers / needs / skills — optional, free-text lists.
+  if (body.offers !== undefined) checkFreeTextList(errors, body.offers, 'offers');
+  if (body.needs !== undefined) checkFreeTextList(errors, body.needs, 'needs');
+  if (body.skills !== undefined) checkFreeTextList(errors, body.skills, 'skills');
 
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Validate an optional free-text string list (offers / needs / skills):
+ * array of 1–80 char strings, max 10 items, no case-insensitive dupes.
+ * Normalization (trim, dedupe) happens at write time.
+ */
+export function checkFreeTextList(errors, value, field, { max = 10, itemMax = 80 } = {}) {
+  if (!Array.isArray(value)) {
+    push(errors, field, `${field} must be an array`);
+    return;
+  }
+  if (value.length > max) {
+    push(errors, field, `${field} must contain at most ${max} items`);
+    return;
+  }
+  const seen = new Set();
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim()) {
+      push(errors, field, `${field} must contain non-empty strings`);
+      break;
+    }
+    if (item.trim().length > itemMax) {
+      push(errors, field, `${field} items must be at most ${itemMax} characters`);
+      break;
+    }
+    const key = item.trim().toLowerCase();
+    if (seen.has(key)) {
+      push(errors, field, `${field} contains a duplicate item`);
+      break;
+    }
+    seen.add(key);
+  }
+}
+
 /** Supported keys for the optional profile links object. */
 export const LINK_KEYS = ['website', 'instagram', 'x', 'linkedin'];
+
+/**
+ * Validate an agent-registry payload.
+ * Create requires operatorProfileId + name; update validates only what's present.
+ * The operator attests to the agent's benevolence via trustNote — the platform
+ * does not independently verify agent behavior (see PRODUCT_AUDIT.md A3).
+ */
+export function validateAgentInput(body, { isUpdate = false } = {}) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  const required = !isUpdate;
+  if (!isUpdate) {
+    if (!Number.isInteger(body.operatorProfileId) || body.operatorProfileId <= 0) {
+      push(errors, 'operatorProfileId', 'operatorProfileId must be a positive integer');
+    }
+  } else if (body.operatorProfileId !== undefined
+    && (!Number.isInteger(body.operatorProfileId) || body.operatorProfileId <= 0)) {
+    push(errors, 'operatorProfileId', 'operatorProfileId must be a positive integer');
+  }
+  if (body.name !== undefined || required) {
+    checkShortText(errors, body.name, 'name', { min: 2, max: 80, required });
+  }
+  if (body.description !== undefined) checkShortText(errors, body.description, 'description', { max: 500 });
+  if (body.capabilities !== undefined) checkFreeTextList(errors, body.capabilities, 'capabilities');
+  if (body.trustNote !== undefined) checkShortText(errors, body.trustNote, 'trustNote', { max: 500 });
+  if (body.endpointUrl !== undefined) {
+    const raw = typeof body.endpointUrl === 'string' ? body.endpointUrl.trim() : '';
+    if (raw) {
+      if (raw.length > 500) {
+        push(errors, 'endpointUrl', 'endpointUrl must be at most 500 characters');
+      } else {
+        let protocol = '';
+        try { protocol = new URL(raw).protocol; } catch { /* invalid */ }
+        if (protocol !== 'http:' && protocol !== 'https:') {
+          push(errors, 'endpointUrl', 'endpointUrl must be a valid http(s) URL');
+        }
+      }
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
 
 /**
  * Validate the optional social/website links object.

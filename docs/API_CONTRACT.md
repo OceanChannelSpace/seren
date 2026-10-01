@@ -17,6 +17,9 @@ coordinator.
 | `intention` | TEXT NOT NULL | 10–500 chars, free text |
 | `connection_prefs` | TEXT NOT NULL | JSON: `{"seeking":["friendship","practice-partner","collaboration","guidance"],"availability":"…"}` |
 | `consents` | TEXT NOT NULL | JSON: `{"introductions":bool,"community_visible":bool,"ai_matching":bool}` |
+| `offers_json` | TEXT NOT NULL DEFAULT '[]' | v7: free-text offers (max 10, ≤80 chars each) |
+| `needs_json` | TEXT NOT NULL DEFAULT '[]' | v7: free-text needs (max 10, ≤80 chars each) |
+| `skills_json` | TEXT NOT NULL DEFAULT '[]' | v7: free-text skills (max 10, ≤80 chars each) |
 | `is_seed` | INTEGER NOT NULL DEFAULT 0 | 1 = demo seed member |
 | `created_at` | TEXT NOT NULL | ISO timestamp |
 | `updated_at` | TEXT NOT NULL | ISO timestamp |
@@ -52,6 +55,18 @@ candidates with `consents.community_visible = 1` are eligible. A candidate
 with score 0 is still returned if nothing better exists (note says so
 honestly); if no eligible candidates exist, return 404 `no_match`.
 
+**Matching v2 (2026-10-01, `/api/discover`):** the curated-Discover engine
+(`src/match.js` `findMatches`) extends the rule with complementary factors —
+needs↔offers token overlap (3 pts each, max 3 per direction), shared skills
+(1 pt each, max 3) — plus shared practices (3), intentions (2), intention
+keywords (1), compatible format (2), local/remote alignment (2), and shared
+language (1). Scores are internal; the UI shows only qualitative reasons.
+**Controlled serendipity:** when `consentSettings.serendipity !== false`
+(default on, toggleable in Me → Discovery settings), one lowest-scoring
+eligible candidate (score > 0) is appended as a clearly-labeled wild card. It
+never displaces ranked results and never overrides consent gates
+(blocks, passes, pauses, existing pairs).
+
 **Intro note template:**
 `"You and {name} share {n} spiritual {interest|interests}{keyword-bit}. {first-name-requester}, {intention-echo}"` — keep it warm, one or two
 sentences. Backend generates it; frontend displays verbatim.
@@ -80,6 +95,36 @@ Base: `/api`. All JSON. Error shape:
 | POST | `/api/introductions/:id/accept` | — | 200 introduction | 404, 409 `invalid_transition` |
 | GET | `/api/beta/status` | — | 200 `{beta:bool, entered:bool}` (always open, even in beta mode) | — |
 | POST | `/api/beta/enter` | `{code}` | 200 `{entered:true}` + `HttpOnly` beta cookie | 403 `beta_code_invalid` |
+| GET | `/api/discover?profileId=&agents=true` | query: profileId required; `agents=true` adds agent suggestions | 200 `{matches:[{profile,reasons,sharedPractices,sharedIntentions,sharedFormats,serendipity,saved}],agents:[{agent,reasons}]}` | 400, 404 |
+| POST | `/api/agents` | `{operatorProfileId,name,description,capabilities[],endpointUrl,trustNote}` | 201 agent (kind `ai`, operator attestation) | 400 `validation_error`, 404 (unknown operator) |
+| GET | `/api/agents` | — | 200 `{agents:[]}` (visible only) | — |
+| GET | `/api/agents/:id` | — | 200 agent | 404 `not_found` |
+| PATCH | `/api/agents/:id` | `{operatorProfileId,...fields}` | 200 agent | 400, 403 (non-operator), 404 |
+| POST | `/api/agents/:id/hide` | `{operatorProfileId}` | 200 `{ok:true}` (soft-hide) | 400, 403 (non-operator), 404 |
+
+### `agents` (v8 — intelligent agents as discoverable participants)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | |
+| `name` | TEXT NOT NULL | 2–80 chars |
+| `kind` | TEXT NOT NULL DEFAULT 'ai' | extensible; only `ai` today |
+| `operator_profile_id` | INTEGER FK → profiles.id | the member who registers and attests |
+| `description` | TEXT NOT NULL DEFAULT '' | ≤ 500 chars |
+| `capabilities_json` | TEXT NOT NULL DEFAULT '[]' | free-text list, max 10, ≤80 chars each — matching surface |
+| `endpoint_url` | TEXT NOT NULL DEFAULT '' | optional, must be http(s) |
+| `trust_note` | TEXT NOT NULL DEFAULT '' | operator's benevolence attestation, ≤ 500 chars |
+| `verified` | INTEGER NOT NULL DEFAULT 0 | platform verification (reserved, future) |
+| `is_hidden` | INTEGER NOT NULL DEFAULT 0 | soft-hide; hidden agents leave listings and discovery |
+| `created_at` / `updated_at` | TEXT NOT NULL | ISO timestamps |
+
+**Agent rules:** agents are always labeled AI and never presented as human.
+Only the registering operator may edit or hide an agent (403 otherwise).
+The platform does not independently verify agent behavior — the operator's
+`trustNote` is the attestation shown to members. Agent discovery is gated on
+the member's `ai_matching` consent: `/api/discover` suggests agents only with
+`?agents=true` and only when `consents.ai_matching !== false`; matching uses
+capability↔need token overlap and intention-language overlap.
 
 When the server runs with `BETA_CODE` set, every endpoint above except
 `/api/health`, `/api/beta/status`, and `/api/beta/enter` returns
@@ -88,7 +133,9 @@ When the server runs with `BETA_CODE` set, every endpoint above except
 | POST | `/api/introductions/:id/withdraw` | — | 200 introduction | 404, 409 `invalid_transition` |
 
 **Profile JSON (full):**
-`{"id","name","email","interests":[],"intention","connectionPrefs":{"seeking":[],"availability":""},"consents":{"introductions":bool,"community_visible":bool,"ai_matching":bool},"isSeed":bool,"createdAt","updatedAt"}`
+`{"id","name","email","interests":[],"intention","connectionPrefs":{"seeking":[],"availability":""},"consents":{"introductions":bool,"community_visible":bool,"ai_matching":bool},"consentSettings":{...},"isSeed":bool,"createdAt","updatedAt"}`
+plus v7: `"offers":[]`, `"needs":[]`, `"skills":[]` (free-text lists, max 10,
+≤80 chars each; shared with the practices visibility rule).
 (camelCase on the wire; snake_case in the DB.)
 
 **Validation rules (backend enforces; frontend mirrors):**
@@ -130,7 +177,12 @@ Labeled "demo seed" in UI. Seeded once at first DB creation
 ## Env vars
 
 `PORT` (default 3000), `DB_PATH` (default `./data/seren.db`), `SEED_DEMO`
-(default `true`). Documented in `.env.example`. No secrets exist.
+(default `true`). `BRAND_NAME` (default `SEREN`) and `BRAND_TAGLINE`
+(default `A consent-first space for meaningful connection`) configure the
+product name and tagline without code changes — exposed at
+`GET /api/meta` → `brand`. The on-disk storage prefix stays `seren`
+(`STORAGE_PREFIX`) so existing members keep their sessions across renames.
+Documented in `.env.example`. No secrets exist.
 
 ---
 

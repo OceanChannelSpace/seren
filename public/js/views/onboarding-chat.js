@@ -13,11 +13,11 @@
 
 import { renderChat } from './chat.js';
 import * as api from '../api.js';
-import { get, setProfileId } from '../state.js';
+import { get, setProfileId, STORAGE_PREFIX } from '../state.js';
 import { navigate } from '../router.js';
 import { el } from '../ui.js';
 
-const OB_SESSION_KEY = 'seren.obSessionId';
+const OB_SESSION_KEY = `${STORAGE_PREFIX}.obSessionId`;
 
 export async function renderOnboardingChat(mount) {
   // Already have a profile on this device: say so plainly instead of

@@ -363,6 +363,50 @@ if (userVersion < 6) {
   db.exec('PRAGMA user_version = 6');
 }
 
+// v7: structured offers / needs / skills on profiles.
+// The relationship-network thesis matches on what someone offers, needs,
+// and can do — not just shared interests. Availability stays free-text in
+// prefs.availability (scheduling is conversational, not a calendar).
+function migrateToV7() {
+  addColumnIfMissing('profiles', 'offers_json', 'TEXT NOT NULL DEFAULT \'[]\'');
+  addColumnIfMissing('profiles', 'needs_json', 'TEXT NOT NULL DEFAULT \'[]\'');
+  addColumnIfMissing('profiles', 'skills_json', 'TEXT NOT NULL DEFAULT \'[]\'');
+}
+if (userVersion < 7) {
+  migrateToV7();
+  db.exec('PRAGMA user_version = 7');
+}
+
+// v8: agent registry — the relationship-network thesis covers humans,
+// communities, AND intelligent agents. Agents are first-class participants:
+// registered by a human operator who attests to their benevolence, with
+// declared capabilities so members can discover them by need. This is the
+// foundation; agent-to-agent flows and introduction requests to agents
+// are follow-ups (see PRODUCT_AUDIT.md).
+function migrateToV8() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'ai',
+      operator_profile_id INTEGER REFERENCES profiles(id),
+      description TEXT NOT NULL DEFAULT '',
+      capabilities_json TEXT NOT NULL DEFAULT '[]',
+      endpoint_url TEXT NOT NULL DEFAULT '',
+      trust_note TEXT NOT NULL DEFAULT '',
+      verified INTEGER NOT NULL DEFAULT 0,
+      is_hidden INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agents_operator ON agents(operator_profile_id)');
+}
+if (userVersion < 8) {
+  migrateToV8();
+  db.exec('PRAGMA user_version = 8');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -388,6 +432,9 @@ export function defaultConsentSettings(legacy = {}) {
     discoveryEnabled: legacy.community_visible !== false,
     paused: false,
     notifications: true,
+    // v7: controlled serendipity — one labeled wild card in Discover.
+    // Default on; the member can turn it off in settings.
+    serendipity: true,
   };
 }
 
@@ -426,6 +473,10 @@ function toProfile(row) {
     practicesOther: row.practices_other || '',
     values: parseJson(row.values_json, []),
     links: parseJson(row.links_json, {}),
+    // v7: structured offers / needs / skills.
+    offers: parseJson(row.offers_json, []),
+    needs: parseJson(row.needs_json, []),
+    skills: parseJson(row.skills_json, []),
     prefs,
     consentSettings,
     isSeed: row.is_seed === 1,
@@ -514,6 +565,28 @@ export function getProfileByEmail(email) {
 }
 
 /**
+ * Normalize a free-text string list (offers / needs / skills):
+ * trim, drop empties and overlong items, dedupe case-insensitively, cap count.
+ * Validation runs first; this is the write-time canonical form.
+ */
+export function normalizeStringList(value, max = 10, itemMax = 80) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const v of value) {
+    if (typeof v !== 'string') continue;
+    const t = v.trim();
+    if (!t || t.length > itemMax) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
  * Normalize the optional profile links object: keep only supported keys,
  * trim, drop empties, prefix a scheme when missing, and serialize valid
  * http(s) URLs. Anything invalid is dropped (validation runs first).
@@ -558,7 +631,7 @@ export function createProfile({
   name, email, interests, intention, connectionPrefs, consents, isSeed = false,
   pronouns = '', region = '', photoUrl = '', about = '', visualIdentity = 'minimal',
   intentions = [], intentionsOther = '', practices = [], practicesOther = '', values = [],
-  prefs = {}, consentSettings = {}, links = {},
+  prefs = {}, consentSettings = {}, links = {}, offers = [], needs = [], skills = [],
 }) {
   const now = new Date().toISOString();
   const mergedPrefs = { ...defaultPrefs(), ...prefs };
@@ -574,8 +647,9 @@ export function createProfile({
     INSERT INTO profiles
       (name, email, interests, intention, connection_prefs, consents, is_seed,
        pronouns, region, photo_url, about, visual_identity, intentions, intentions_other,
-       practices, practices_other, prefs, consent_settings, links_json, values_json, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       practices, practices_other, prefs, consent_settings, links_json, values_json,
+       offers_json, needs_json, skills_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     name.trim(),
@@ -598,6 +672,9 @@ export function createProfile({
     JSON.stringify({ ...defaultConsentSettings(consents), ...consentSettings }),
     JSON.stringify(normalizeLinks(links)),
     JSON.stringify(Array.isArray(values) ? values : []),
+    JSON.stringify(normalizeStringList(offers)),
+    JSON.stringify(normalizeStringList(needs)),
+    JSON.stringify(normalizeStringList(skills)),
     now,
     now,
   );
@@ -643,6 +720,10 @@ export function updateProfile(id, fields) {
   if (fields.practicesOther !== undefined) { sets.push('practices_other = ?'); params.push(str(fields.practicesOther)); }
   if (fields.values !== undefined) { sets.push('values_json = ?'); params.push(JSON.stringify(fields.values)); }
   if (fields.links !== undefined) { sets.push('links_json = ?'); params.push(JSON.stringify(normalizeLinks(fields.links))); }
+  // v7: structured offers / needs / skills (normalized at write time).
+  if (fields.offers !== undefined) { sets.push('offers_json = ?'); params.push(JSON.stringify(normalizeStringList(fields.offers))); }
+  if (fields.needs !== undefined) { sets.push('needs_json = ?'); params.push(JSON.stringify(normalizeStringList(fields.needs))); }
+  if (fields.skills !== undefined) { sets.push('skills_json = ?'); params.push(JSON.stringify(normalizeStringList(fields.skills))); }
   if (fields.prefs !== undefined) {
     sets.push('prefs = ?'); params.push(JSON.stringify({ ...existing.prefs, ...fields.prefs }));
   }
@@ -728,6 +809,10 @@ export function getVisibleProfile(id, viewerId) {
     view.intentionsOther = p.intentionsOther;
     view.interests = p.interests;
     view.about = p.about;
+    // v7: offers / needs / skills are matching surface, same visibility rule.
+    view.offers = p.offers;
+    view.needs = p.needs;
+    view.skills = p.skills;
   }
   if (cs.showRegion || mutual) view.region = p.region;
   if (cs.showPhoto || mutual) view.photoUrl = p.photoUrl;
@@ -735,13 +820,106 @@ export function getVisibleProfile(id, viewerId) {
     view.intention = p.intention;
     // Social/website links are contact details: only after mutual consent.
     if (p.links && Object.keys(p.links).length) view.links = p.links;
-    view.prefs = { localRemote: p.prefs.localRemote, formats: p.prefs.formats, languages: p.prefs.languages };
+    view.prefs = { localRemote: p.prefs.localRemote, formats: p.prefs.formats, languages: p.prefs.languages, availability: p.prefs.availability || '' };
   }
   view.mutual = mutual;
   return view;
 }
 
 // ---------- introduction helpers ----------
+
+// ---------- agent registry ----------
+
+/** Agent wire object (camelCase). Agents are AI participants registered by a human operator. */
+function toAgent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind || 'ai',
+    operatorProfileId: row.operator_profile_id,
+    operatorName: row.operator_name || '',
+    description: row.description || '',
+    capabilities: parseJson(row.capabilities_json, []),
+    endpointUrl: row.endpoint_url || '',
+    trustNote: row.trust_note || '',
+    verified: row.verified === 1,
+    isHidden: row.is_hidden === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+const AGENT_SELECT = `
+  SELECT a.*, p.name AS operator_name
+  FROM agents a
+  LEFT JOIN profiles p ON p.id = a.operator_profile_id
+`;
+
+export function getAgent(id) {
+  return toAgent(db.prepare(`${AGENT_SELECT} WHERE a.id = ?`).get(id));
+}
+
+export function listAgents({ includeHidden = false } = {}) {
+  const rows = db.prepare(
+    `${AGENT_SELECT} ${includeHidden ? '' : 'WHERE a.is_hidden = 0'} ORDER BY a.id ASC`,
+  ).all();
+  return rows.map(toAgent);
+}
+
+export function createAgent({ name, operatorProfileId, description = '', capabilities = [], endpointUrl = '', trustNote = '' }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO agents
+      (name, kind, operator_profile_id, description, capabilities_json, endpoint_url, trust_note, verified, is_hidden, created_at, updated_at)
+    VALUES (?, 'ai', ?, ?, ?, ?, ?, 0, 0, ?, ?)
+  `).run(
+    String(name).trim(),
+    Number(operatorProfileId) || null,
+    String(description || '').trim(),
+    JSON.stringify(normalizeStringList(capabilities)),
+    String(endpointUrl || '').trim(),
+    String(trustNote || '').trim(),
+    now,
+    now,
+  );
+  return getAgent(Number(result.lastInsertRowid));
+}
+
+/**
+ * Update an agent. Only the registering operator may edit.
+ * @returns the updated agent, null when not found, or 'forbidden'.
+ */
+export function updateAgent(id, fields, operatorProfileId) {
+  const existing = getAgent(id);
+  if (!existing) return null;
+  if (Number(existing.operatorProfileId) !== Number(operatorProfileId)) return 'forbidden';
+  const sets = [];
+  const params = [];
+  const str = (v) => String(v).trim();
+  if (fields.name !== undefined) { sets.push('name = ?'); params.push(str(fields.name)); }
+  if (fields.description !== undefined) { sets.push('description = ?'); params.push(str(fields.description)); }
+  if (fields.capabilities !== undefined) { sets.push('capabilities_json = ?'); params.push(JSON.stringify(normalizeStringList(fields.capabilities))); }
+  if (fields.endpointUrl !== undefined) { sets.push('endpoint_url = ?'); params.push(str(fields.endpointUrl)); }
+  if (fields.trustNote !== undefined) { sets.push('trust_note = ?'); params.push(str(fields.trustNote)); }
+  sets.push('updated_at = ?');
+  params.push(new Date().toISOString());
+  db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+  return getAgent(id);
+}
+
+/**
+ * Soft-hide an agent from discovery. Only the operator may hide.
+ * @returns true when hidden, false when not found, 'forbidden' otherwise.
+ */
+export function hideAgent(id, operatorProfileId) {
+  const existing = getAgent(id);
+  if (!existing) return false;
+  if (Number(existing.operatorProfileId) !== Number(operatorProfileId)) return 'forbidden';
+  db.prepare('UPDATE agents SET is_hidden = 1, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id);
+  return true;
+}
 
 const getIntroductionStmt = db.prepare('SELECT * FROM introductions WHERE id = ?');
 export function getIntroduction(id) {

@@ -8,10 +8,11 @@
 // (Send, a chip click, or an explicit selection send).
 
 import { get } from '../state.js';
+import { STORAGE_PREFIX } from '../state.js';
 import * as api from '../api.js';
 import { esc, el, card, announce, toast } from '../ui.js';
 
-const SESSION_KEY = 'seren.chatSessionId';
+const SESSION_KEY = `${STORAGE_PREFIX}.chatSessionId`;
 const MAX_SEND = 2000;
 
 // Defaults used when the resume payload carries state (brief/proposals)

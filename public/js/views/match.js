@@ -117,6 +117,16 @@ export async function renderMatchDetail(root, ctx) {
     profileCard.appendChild(s);
   }
 
+  // v7: offers / needs / skills — the outward-facing matching surface.
+  for (const [key, title] of [['offers', 'Offers'], ['needs', 'Looking for'], ['skills', 'Skills']]) {
+    const items = person[key] || [];
+    if (items.length) {
+      const s = el(`<div class="detail-section"><h3>${title}</h3></div>`);
+      s.appendChild(chipsFor(items, (x) => x));
+      profileCard.appendChild(s);
+    }
+  }
+
   // Ways to connect — from prefs + connectionPrefs, whatever is shared.
   const prefs = person.prefs || {};
   const cp = person.connectionPrefs || {};

@@ -1,7 +1,7 @@
 // SEREN welcome view — beta invite gate + landing.
 // The beta gate lives here (not the router) so the invite is a full page.
 
-import { get, set, setProfileId } from '../state.js';
+import { get, set, setProfileId, brandName, brandTagline } from '../state.js';
 import { betaEnter, fetchMeta, friendlyError, relink, getProfile } from '../api.js';
 import { el, esc, card, errorBanner, wireSubmit, textInput, field, announce, toast } from '../ui.js';
 import { navigate } from '../router.js';
@@ -15,7 +15,7 @@ export async function renderWelcome(root, ctx) {
     document.body.classList.remove('beta-locked');
     root.appendChild(renderLanding());
   }
-  announce('Welcome to SEREN');
+  announce(`Welcome to ${brandName()}`);
 }
 
 function renderGate() {
@@ -30,8 +30,8 @@ function renderGate() {
   const gateCard = wrap.querySelector('.card');
   gateCard.innerHTML = `
     <p class="beta-eyebrow">Private beta</p>
-    <h1>Welcome to SEREN</h1>
-    <p class="lede">SEREN is a quiet, consent-first space for intentional spiritual connection.
+    <h1>Welcome to ${esc(brandName())}</h1>
+    <p class="lede">${esc(brandName())} is a quiet, consent-first space for intentional spiritual connection.
     It is currently in private beta — please enter your invite code to continue.</p>`;
   gateCard.appendChild(banner.node);
 
@@ -42,7 +42,7 @@ function renderGate() {
   codeInput.setAttribute('aria-describedby', 'beta-hint');
   form.appendChild(field('Invite code', codeInput, {
     id: 'beta-code',
-    hint: 'Beta codes are shared personally by the SEREN team.',
+    hint: `Beta codes are shared personally by the ${brandName()} team.`,
   }));
   const hint = form.querySelector('.field-hint');
   if (hint) hint.id = 'beta-hint';
@@ -78,14 +78,14 @@ function renderGate() {
 
 function renderLanding() {
   const profileId = get('profileId');
-  const wrap = el(`<section class="page" aria-label="Welcome to SEREN"></section>`);
+  const name = brandName();
+  const wrap = el(`<section class="page" aria-label="Welcome to ${esc(name)}"></section>`);
 
   const hero = el(`
     <div class="hero center">
       <div class="sigil" aria-hidden="true">✦</div>
-      <h1>SEREN</h1>
-      <p class="lede">A consent-first space for intentional spiritual, metaphysical,
-      and consciousness-centered connection. Small, curated, and calm —
+      <h1>${esc(name)}</h1>
+      <p class="lede">${esc(brandTagline() || 'A consent-first space for intentional spiritual, metaphysical, and consciousness-centered connection.')} Small, curated, and calm —
       never a feed, never a scoreboard.</p>
     </div>`);
   wrap.appendChild(hero);
@@ -102,7 +102,7 @@ function renderLanding() {
   }
 
   const steps = card([
-    el(`<h2>How SEREN works</h2>`),
+    el(`<h2>How ${esc(brandName())} works</h2>`),
     el(`<div class="steps">
       <div class="step"><span class="step-num" aria-hidden="true">1</span>
         <h3>Create your profile</h3><p>Share your practices and intentions at your own pace. Your email stays private — always.</p></div>

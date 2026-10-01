@@ -8,6 +8,7 @@
 //    never an opaque "compatibility" claim, and never a numeric score in UI.
 
 import { STOPWORDS, PRACTICE_LABELS, INTENTION_LABELS, FORMAT_LABELS } from './constants.js';
+import { BRAND } from './config.js';
 
 const stopwordSet = new Set(STOPWORDS);
 
@@ -48,6 +49,25 @@ function intersect(a, b) {
   return a.filter((x) => setB.has(x));
 }
 
+/**
+ * Token-overlap between two free-text lists (offers / needs / skills).
+ * Free text rarely matches exactly, so this works on meaningful tokens
+ * (≥4 chars, minus stopwords). Returns the matching display phrases from
+ * listB whose tokens overlap any token in listA.
+ */
+function complementaryMatches(listA, listB) {
+  const tokensA = new Set();
+  for (const item of asArray(listA)) for (const t of tokenize(item)) tokensA.add(t);
+  if (tokensA.size === 0) return [];
+  const hits = [];
+  for (const item of asArray(listB)) {
+    if (typeof item !== 'string') continue;
+    const tokens = tokenize(item);
+    if (tokens.some((t) => tokensA.has(t))) hits.push(item.trim());
+  }
+  return hits;
+}
+
 function sameRegion(a, b) {
   if (!a || !b) return false;
   const na = String(a).toLowerCase().trim();
@@ -71,6 +91,9 @@ function sameRegion(a, b) {
  *   compatible connection format          2
  *   local/remote alignment                2
  *   shared language                       1
+ *   v7: their offers match your needs      3 each (token overlap, max 3 counted)
+ *   v7: your offers match their needs      3 each (token overlap, max 3 counted)
+ *   v7: shared skills                      1 each (token overlap, max 3 counted)
  *
  * Hard gates (applied by findMatches, not here): self, discovery disabled,
  * paused, no introductions consent, existing pair, passed, blocked.
@@ -159,11 +182,37 @@ export function scoreCandidate(requester, candidate, intentionText = '') {
     score += 1;
   }
 
-  if (reasons.length === 0) {
-    reasons.push('SEREN surfaced this profile as a gentle stretch beyond your stated preferences.');
+  // v7: complementarity — connection is not only similarity. What you need
+  // against what they offer (and the reverse), plus shared capabilities.
+  const needOfferHits = complementaryMatches(requester.needs, candidate.offers).slice(0, 3);
+  if (needOfferHits.length > 0) {
+    score += 3 * needOfferHits.length;
+    reasons.push(
+      needOfferHits.length === 1
+        ? `They offer “${needOfferHits[0]}” — something you’re looking for.`
+        : `They offer ${needOfferHits.length} things you’re looking for, including “${needOfferHits[0]}”.`,
+    );
+  }
+  const offerNeedHits = complementaryMatches(requester.offers, candidate.needs).slice(0, 3);
+  if (offerNeedHits.length > 0) {
+    score += 3 * offerNeedHits.length;
+    reasons.push(
+      offerNeedHits.length === 1
+        ? `You offer “${offerNeedHits[0]}” — something they’re looking for.`
+        : `You offer ${offerNeedHits.length} things they’re looking for, including “${offerNeedHits[0]}”.`,
+    );
+  }
+  const sharedSkills = complementaryMatches(requester.skills, candidate.skills).slice(0, 3);
+  if (sharedSkills.length > 0) {
+    score += 1 * sharedSkills.length;
+    reasons.push(`You share skills around ${quotedList(sharedSkills)}.`);
   }
 
-  return { score, reasons, sharedPractices, sharedIntentions, sharedFormats };
+  if (reasons.length === 0) {
+    reasons.push(`${BRAND.name} surfaced this profile as a gentle stretch beyond your stated preferences.`);
+  }
+
+  return { score, reasons, sharedPractices, sharedIntentions, sharedFormats, serendipity: false };
 }
 
 /**
@@ -231,6 +280,96 @@ export function findMatches(requester, candidates, opts = {}) {
   }
 
   results.sort((a, b) => b.score - a.score || a.candidate.id - b.candidate.id);
+  const cap = Math.max(1, limit);
+  const final = results.slice(0, cap);
+
+  // v7: controlled serendipity — one clearly-labeled wild card appended after
+  // the ranked results. Permissioned: only when the requester left serendipity
+  // on (consentSettings.serendipity !== false). The wild card still passed
+  // every consent gate above; it simply isn't an obvious similarity match.
+  // It is never counted against the limit — it arrives as an explicit extra.
+  if (requester.consentSettings?.serendipity !== false && final.length >= 2) {
+    const topIds = new Set(final.map((r) => r.candidate.id));
+    const pool = results.filter((r) => !topIds.has(r.candidate.id) && r.score > 0);
+    if (pool.length > 0) {
+      const wild = pool[pool.length - 1]; // lowest-scoring eligible candidate
+      wild.serendipity = true;
+      wild.reasons = [
+        'A gentle wild card — fewer obvious overlaps with your profile, offered to widen the circle. Shown only because you keep serendipity on; you can turn it off in settings.',
+      ];
+      final.push(wild);
+    }
+  }
+
+  return final;
+}
+
+/* ------------------------------------------------------------------ */
+/* Agent matching — intelligent agents as discoverable participants.   */
+/*                                                                     */
+/* Agents are matched against a member's needs and intention language, */
+/* never presented as human, and always labeled as AI in the UI. The   */
+/* requesting member must have ai_matching consent (checked by the     */
+/* caller, e.g. /api/discover).                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Score one agent against a requester.
+ *
+ * Factors (weights internal; UI shows only reasons):
+ *   capability tokens overlapping the member's needs   3 each (max 3)
+ *   capability/description tokens in intention text    1 each (max 6)
+ *
+ * @param {object} requester camelCase profile
+ * @param {object} agent camelCase agent
+ * @param {string} intentionText free-text intention for keyword overlap
+ * @returns {{score:number, reasons:string[]}}
+ */
+export function scoreAgent(requester, agent, intentionText = '') {
+  const reasons = [];
+  let score = 0;
+
+  const needHits = complementaryMatches(requester.needs, agent.capabilities).slice(0, 3);
+  if (needHits.length > 0) {
+    score += 3 * needHits.length;
+    reasons.push(
+      needHits.length === 1
+        ? `Its capabilities include “${needHits[0]}” — something you’re looking for.`
+        : `Its capabilities include ${needHits.length} things you’re looking for, including “${needHits[0]}”.`,
+    );
+  }
+
+  const reqTokens = new Set(tokenize(intentionText || requester.intention || ''));
+  const agentTokens = new Set([
+    ...tokenize(agent.description || ''),
+    ...asArray(agent.capabilities).flatMap((c) => tokenize(c)),
+  ]);
+  const sharedKeywords = [...reqTokens].filter((t) => agentTokens.has(t)).slice(0, 6);
+  if (sharedKeywords.length > 0) {
+    score += 1 * sharedKeywords.length;
+    reasons.push(`It works with ${quotedList(sharedKeywords.slice(0, 3))} — language from your intention.`);
+  }
+
+  return { score, reasons };
+}
+
+/**
+ * Curated agent suggestions for a requester.
+ *
+ * @param {object} requester camelCase profile
+ * @param {object[]} agents camelCase agents
+ * @param {object} opts { intentionText, limit }
+ * @returns {Array<{agent, score, reasons}>}
+ */
+export function findAgentMatches(requester, agents, { intentionText = '', limit = 3 } = {}) {
+  const results = [];
+  for (const agent of agents || []) {
+    if (!agent || agent.isHidden) continue;
+    const scored = scoreAgent(requester, agent, intentionText);
+    if (scored.score <= 0) continue;
+    results.push({ agent, ...scored });
+  }
+  results.sort((a, b) => b.score - a.score || a.agent.id - b.agent.id);
   return results.slice(0, Math.max(1, limit));
 }
 

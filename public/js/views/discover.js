@@ -1,7 +1,7 @@
 // Discover — curated matches with qualitative reasons.
 // Small, intentional suggestions: limit 6, "Show more" refetches.
 
-import { get, metaList, practiceLabel, intentionLabel } from '../state.js';
+import { get, metaList, practiceLabel, intentionLabel, STORAGE_PREFIX } from '../state.js';
 import * as api from '../api.js';
 import { navigate } from '../router.js';
 import {
@@ -9,7 +9,7 @@ import {
   chipSingle, field, textInput, selectInput, card, avatarFor, confirmDialog, announce,
 } from '../ui.js';
 
-const INTENTION_KEY = 'seren.discoverIntention';
+const INTENTION_KEY = `${STORAGE_PREFIX}.discoverIntention`;
 
 export function stashDiscoverIntention(text) {
   try { sessionStorage.setItem(INTENTION_KEY, text || ''); } catch { /* noop */ }
@@ -29,6 +29,40 @@ function profileLine(p) {
   return bits.join(' · ');
 }
 
+/** Card for an intelligent-agent suggestion — always labeled AI, never human. */
+function agentCard(entry) {
+  const a = entry.agent || {};
+  const c = card();
+  c.classList.add('match-card');
+
+  const head = el(`<div class="person-head"></div>`);
+  head.appendChild(avatarFor(a.name || 'Agent'));
+  const who = el(`<div class="who"></div>`);
+  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span></h3>`));
+  if (a.operatorName) who.appendChild(el(`<p class="person-sub">Registered by ${esc(a.operatorName)}</p>`));
+  head.appendChild(who);
+  c.appendChild(head);
+
+  if (a.description) c.appendChild(el(`<p>${esc(a.description)}</p>`));
+  if (a.trustNote) c.appendChild(el(`<p class="field-hint">Operator attests: “${esc(a.trustNote)}”</p>`));
+
+  if (Array.isArray(entry.reasons) && entry.reasons.length) {
+    const ul = el(`<ul class="reason-list"></ul>`);
+    for (const r of entry.reasons.slice(0, 4)) {
+      ul.appendChild(el(`<li>${esc(r)}</li>`));
+    }
+    c.appendChild(ul);
+  }
+
+  const caps = (a.capabilities || []).slice(0, 4);
+  if (caps.length) {
+    const row = el(`<div class="chip-row"></div>`);
+    for (const label of caps) row.appendChild(el(`<span class="chip chip-static">${esc(label)}</span>`));
+    c.appendChild(row);
+  }
+  return c;
+}
+
 function matchCard(match, profileId, onPassed) {
   const p = match.profile;
   const c = card();
@@ -38,7 +72,7 @@ function matchCard(match, profileId, onPassed) {
   head.appendChild(avatarFor(p.name));
   const who = el(`<div class="who"></div>`);
   const sub = [profileLine(p), p.region].filter(Boolean).join(' · ');
-  who.appendChild(el(`<h3>${esc(p.name)}${p.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}</h3>`));
+  who.appendChild(el(`<h3>${esc(p.name)}${p.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}${match.serendipity ? ' <span class="pill">wild card</span>' : ''}</h3>`));
   if (sub) who.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
   head.appendChild(who);
   c.appendChild(head);
@@ -197,11 +231,13 @@ export async function renderDiscover(root, ctx) {
         practice: practiceSelect.value || undefined,
         locality: locality.get() || undefined,
         format: formatSelect.value || undefined,
+        agents: true,
       };
       const data = await api.discover(profileId, opts);
       loader.remove();
       const matches = data.matches || [];
-      if (!matches.length) {
+      const agentEntries = data.agents || [];
+      if (!matches.length && !agentEntries.length) {
         resultsWrap.appendChild(emptyState({
           title: 'No new people to meet right now.',
           body: 'Check back later, or explore a mode below.',
@@ -224,6 +260,14 @@ export async function renderDiscover(root, ctx) {
       };
       for (const m of matches) grid.appendChild(matchCard(m, profileId, onPassed));
       resultsWrap.appendChild(grid);
+
+      if (agentEntries.length) {
+        resultsWrap.appendChild(el(`<h2 style="margin-top:2.25rem">Intelligent agents</h2>`));
+        resultsWrap.appendChild(el(`<p class="field-hint">AI participants registered by members — always labeled, never presented as human. <a href="#/agents">Browse the registry</a></p>`));
+        const agentGrid = el(`<div class="match-grid"></div>`);
+        for (const entry of agentEntries) agentGrid.appendChild(agentCard(entry));
+        resultsWrap.appendChild(agentGrid);
+      }
 
       const moreWrap = el(`<div class="center" style="margin-top:1.5rem"></div>`);
       const moreBtn = el(`<button type="button" class="btn btn-ghost">Show more</button>`);

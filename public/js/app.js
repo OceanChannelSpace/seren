@@ -16,6 +16,7 @@ import { renderCircles, renderCircleDetail, renderCircleNew } from './views/circ
 import { renderMe, renderProfileEdit } from './views/me.js';
 import { renderSaved } from './views/saved.js';
 import { renderBrief } from './views/brief.js';
+import { renderAgents } from './views/agents.js';
 
 async function boot() {
   // Beta gate state.
@@ -26,13 +27,18 @@ async function boot() {
   } catch { betaEntered = true; /* fail open locally */ }
   set({ betaEntered });
 
-  // Product taxonomy.
+  // Product taxonomy + brand (brand name is provisional — see src/config.js).
   try {
     set({ meta: await fetchMeta() });
   } catch (e) {
     console.error('meta load failed', e);
     set({ meta: { practices: [], intentions: [], connectionTypes: [], connectionFormats: [], commitmentLevels: [], tones: [], circleKinds: [], circlePrivacy: [], requestTemplates: [], exploreTopics: [], responseKinds: [] } });
   }
+  try {
+    const meta = get('meta');
+    const brandName = (meta && meta.brand && meta.brand.name) || 'SEREN';
+    document.title = `${brandName} — ${ (meta && meta.brand && meta.brand.tagline) || 'A consent-first space for meaningful connection'}`;
+  } catch { /* noop */ }
 
   // '/' is the guided home for signed-in members, the welcome landing otherwise.
   addRoute('/', renderHome, { title: 'Welcome to SEREN' });
@@ -51,6 +57,7 @@ async function boot() {
   addRoute('/me', renderMe, { title: 'Me', requiresBeta: true, requiresProfile: true });
   addRoute('/me/edit', renderProfileEdit, { title: 'Edit profile', requiresBeta: true, requiresProfile: true });
   addRoute('/saved', renderSaved, { title: 'Saved', requiresBeta: true, requiresProfile: true });
+  addRoute('/agents', renderAgents, { title: 'Intelligent agents', requiresBeta: true, requiresProfile: true });
   addRoute('*', renderWelcome, { title: 'Welcome to SEREN' });
 
   startRouter();

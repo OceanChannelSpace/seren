@@ -15,13 +15,13 @@ const state = {
 };
 
 function getProfileId() {
-  try { return Number(localStorage.getItem('seren.profileId')) || null; } catch { return null; }
+  try { return Number(localStorage.getItem(`${STORAGE_PREFIX}.profileId`)) || null; } catch { return null; }
 }
 
 function setProfileId(id) {
   try {
-    if (id == null) localStorage.removeItem('seren.profileId');
-    else localStorage.setItem('seren.profileId', String(id));
+    if (id == null) localStorage.removeItem(`${STORAGE_PREFIX}.profileId`);
+    else localStorage.setItem(`${STORAGE_PREFIX}.profileId`, String(id));
   } catch { /* private mode */ }
   set({ profileId: id || null, profile: null });
 }
@@ -54,10 +54,31 @@ export function clearSession() {
 
 export { setProfileId, getProfileId };
 
+// Storage namespace for this device's keys (seren.profileId, …).
+// Mirrors src/config.js STORAGE_PREFIX. Changing the VALUE logs out existing
+// members — a rename needs a migration, not a find-replace.
+export const STORAGE_PREFIX = 'seren';
+
 // Convenience: labels from the meta taxonomy.
 export function metaList(key) {
   const meta = get('meta');
   return (meta && meta[key]) || [];
+}
+
+/**
+ * Provisional product name from the server brand config (/api/meta.brand).
+ * Use this instead of hard-coding "SEREN" in user-facing copy so a future
+ * rename is a server-side one-line change.
+ */
+export function brandName() {
+  const meta = get('meta');
+  return (meta && meta.brand && meta.brand.name) || 'SEREN';
+}
+
+/** Provisional product tagline from the server brand config. */
+export function brandTagline() {
+  const meta = get('meta');
+  return (meta && meta.brand && meta.brand.tagline) || '';
 }
 
 export function connectionTypeLabel(value) {

@@ -69,6 +69,14 @@ export const unsaveItem = (profileId, kind, refId) =>
 export const listSaved = (profileId) =>
   request('GET', `/api/saved${profileQuery(profileId)}`);
 
+// --- agent registry ---
+export const listAgents = () => request('GET', '/api/agents');
+export const getAgent = (id) => request('GET', `/api/agents/${id}`);
+export const registerAgent = (payload) => request('POST', '/api/agents', payload);
+export const updateAgent = (id, payload) => request('PATCH', `/api/agents/${id}`, payload);
+export const hideAgent = (id, operatorProfileId) =>
+  request('POST', `/api/agents/${id}/hide`, { operatorProfileId });
+
 // --- legacy single-shot introduction request ---
 export const requestIntroduction = (requesterId, intention) =>
   request('POST', '/api/introductions/request', { requesterId: requesterId ?? get('profileId'), intention });

@@ -97,7 +97,9 @@ async function makeActiveBrief(profileId, overrides = {}) {
 
 test('migration v6: briefs table, shared-text column, chat_sessions, user_version, sentinel', () => {
   const version = db.prepare('PRAGMA user_version').get().user_version;
-  assert.equal(version, 6);
+  // v7 (offers/needs/skills) and v8 (agent registry) are additive migrations
+  // on top of v6; this test verifies the v6 artifacts still exist.
+  assert.ok(version >= 6, `expected schema version >= 6, got ${version}`);
   const briefCols = db.prepare('PRAGMA table_info(briefs)').all().map((r) => r.name);
   for (const c of ['id', 'profile_id', 'who_text', 'shared_text', 'consent_save', 'consent_share', 'status']) {
     assert.ok(briefCols.includes(c), `briefs missing column ${c}`);

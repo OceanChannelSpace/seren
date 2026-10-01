@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import express from 'express';
+import { BRAND } from './config.js';
 import {
   ERROR_CODES, VALID_TRANSITIONS, INTRO_STATUS, RESPONSE_KINDS,
   PRACTICES, PRACTICE_VALUES, INTENTIONS, CONNECTION_TYPES, CONNECTION_FORMATS, FORMAT_LABELS,
@@ -18,13 +19,13 @@ import {
   validateGuideStart, validateGuideAnswer,
   validateBriefDraft, validateBriefUpdate, validateBriefApprove,
   validateChatStart, validateChatMessage, validateRelink,
-  validateOnboardingStart, validateOnboardingMessage,
+  validateOnboardingStart, validateOnboardingMessage, validateAgentInput,
 } from './validate.js';
 import {
   startOnboarding, handleOnboardingTurn, questionForStage,
   quickRepliesForStage, isOnboardingStage,
 } from './onboarding.js';
-import { findBestMatch, buildIntroNote, findMatches } from './match.js';
+import { findBestMatch, buildIntroNote, findMatches, findAgentMatches } from './match.js';
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
   remainingQuestions, getQuestionDef, buildBriefDraft, buildWarmIntroMessage,
@@ -87,6 +88,11 @@ import {
   updateBrief,
   approveBrief,
   setBriefStatus,
+  getAgent,
+  listAgents,
+  createAgent,
+  updateAgent,
+  hideAgent,
 } from './db.js';
 
 export const app = express();
@@ -245,6 +251,7 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/meta', (req, res) => {
   res.json({
+    brand: { name: BRAND.name, tagline: BRAND.tagline },
     practices: PRACTICES,
     intentions: INTENTIONS,
     connectionTypes: CONNECTION_TYPES,
@@ -256,7 +263,7 @@ app.get('/api/meta', (req, res) => {
     requestTemplates: REQUEST_TEMPLATES,
     exploreTopics: EXPLORE_TOPICS,
     responseKinds: RESPONSE_KINDS,
-    supportNote: 'SEREN is a connection platform, not medical, mental-health, legal, or emergency support.',
+    supportNote: BRAND.supportNote,
   });
 });
 
@@ -357,6 +364,14 @@ app.get('/api/discover', (req, res) => {
 
   const savedKeys = getSavedKeys(profile.id);
 
+  // v8: optional agent suggestions alongside human matches. Gated on the
+  // member's ai_matching consent — AI discovery is opt-in, like all matching.
+  let agentMatches = [];
+  if (req.query.agents === 'true' && profile.consents?.ai_matching !== false) {
+    agentMatches = findAgentMatches(profile, listAgents(), { intentionText, limit: 3 })
+      .map((m) => ({ agent: m.agent, reasons: m.reasons }));
+  }
+
   res.json({
     matches: matches.map((m) => ({
       profile: getVisibleProfile(m.candidate.id, profile.id),
@@ -364,9 +379,61 @@ app.get('/api/discover', (req, res) => {
       sharedPractices: m.sharedPractices,
       sharedIntentions: m.sharedIntentions,
       sharedFormats: m.sharedFormats,
+      serendipity: m.serendipity === true,
       saved: savedKeys.has(`match:${m.candidate.id}`),
     })),
+    agents: agentMatches,
   });
+});
+
+// --- agent registry (intelligent agents as discoverable participants) ---
+
+// Register an agent. The operator (a member profile) attests to the agent's
+// benevolence via trustNote; the platform does not independently verify
+// agent behavior (see PRODUCT_AUDIT.md A3).
+app.post('/api/agents', (req, res) => {
+  const { ok, errors } = validateAgentInput(req.body, { isUpdate: false });
+  if (!ok) return validationErr(res, errors);
+  const operator = getProfile(req.body.operatorProfileId);
+  if (!operator) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Operator profile not found.');
+  const agent = createAgent(req.body);
+  res.status(201).json(agent);
+});
+
+app.get('/api/agents', (req, res) => {
+  res.json({ agents: listAgents() });
+});
+
+app.get('/api/agents/:id', (req, res) => {
+  const id = parseId(req.params.id);
+  const agent = id === null ? null : getAgent(id);
+  if (!agent || agent.isHidden) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  res.json(agent);
+});
+
+// Only the registering operator may edit or hide an agent.
+app.patch('/api/agents/:id', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  const { ok, errors } = validateAgentInput(req.body, { isUpdate: true });
+  if (!ok) return validationErr(res, errors);
+  const result = updateAgent(id, req.body, req.body.operatorProfileId);
+  if (result === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  if (result === 'forbidden') return err(res, 403, ERROR_CODES.FORBIDDEN, 'Only the registering operator can edit this agent.');
+  res.json(result);
+});
+
+app.post('/api/agents/:id/hide', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  const operatorProfileId = req.body?.operatorProfileId;
+  if (!Number.isInteger(operatorProfileId) || operatorProfileId <= 0) {
+    return validationErr(res, [{ field: 'operatorProfileId', message: 'operatorProfileId must be a positive integer' }]);
+  }
+  const result = hideAgent(id, operatorProfileId);
+  if (result === false) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  if (result === 'forbidden') return err(res, 403, ERROR_CODES.FORBIDDEN, 'Only the registering operator can hide this agent.');
+  res.json({ ok: true });
 });
 
 app.post('/api/discover/pass', (req, res) => {

@@ -14,6 +14,7 @@ export function addRoute(path, render, opts = {}) {
 const NAV_ITEMS = [
   { path: '#/', label: 'Home', icon: '⌂' },
   { path: '#/discover', label: 'Discover', icon: '✦' },
+  { path: '#/agents', label: 'Agents', icon: '⚛' },
   { path: '#/modes', label: 'Modes', icon: '◈' },
   { path: '#/requests', label: 'Requests', icon: '✉' },
   { path: '#/connections', label: 'Connections', icon: '❋' },
