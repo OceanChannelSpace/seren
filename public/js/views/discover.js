@@ -73,7 +73,7 @@ function matchCard(match, profileId, onPassed) {
   head.appendChild(avatarFor(p.name));
   const who = el(`<div class="who"></div>`);
   const sub = [profileLine(p), p.region].filter(Boolean).join(' · ');
-  who.appendChild(el(`<h3>${esc(p.name)}${p.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}${match.serendipity ? ' <span class="pill">wild card</span>' : ''}</h3>`));
+  who.appendChild(el(`<h3>${esc(p.name)}${match.serendipity ? ' <span class="pill">wild card</span>' : ''}</h3>`));
   if (sub) who.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
   head.appendChild(who);
   c.appendChild(head);
@@ -241,7 +241,7 @@ export async function renderDiscover(root, ctx) {
       if (!matches.length && !agentEntries.length) {
         resultsWrap.appendChild(emptyState({
           title: 'No new people to meet right now.',
-          body: 'Check back later, or explore a mode below.',
+          body: 'SEREN is a small private beta, and every introduction needs a yes from both people. As more members join and share what they are looking for, matches will appear here.',
           actionLabel: 'Explore modes',
           actionHref: '#/modes',
         }));
@@ -253,7 +253,7 @@ export async function renderDiscover(root, ctx) {
           resultsWrap.innerHTML = '';
           resultsWrap.appendChild(emptyState({
             title: 'No new people to meet right now.',
-            body: 'Check back later, or explore a mode below.',
+            body: 'SEREN is a small private beta, and every introduction needs a yes from both people. As more members join and share what they are looking for, matches will appear here.',
             actionLabel: 'Explore modes',
             actionHref: '#/modes',
           }));

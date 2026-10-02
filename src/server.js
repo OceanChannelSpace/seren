@@ -37,6 +37,7 @@ import {
   greetingMessages, questionMessage, briefMessage, publicBrief,
   classifyReviewText, detectEditField, fieldLabel,
   matchOptions, isSkipText, STARTERS, APPROVE_QUICK_REPLIES,
+  proposalsStageText, NO_SUGGESTIONS_TEXT,
 } from './chat.js';
 import {
   db,
@@ -2025,6 +2026,16 @@ function chatHandleEditing(profile, session, text) {
   };
 }
 
+/** Whether an active brief currently yields any proposal cards. Never throws:
+ *  a failure to compute proposals is treated as "none", never as cards. */
+function hasActiveProposals(profile, brief) {
+  try {
+    return !!(brief && brief.status === 'active' && briefProposals(profile, brief).length);
+  } catch {
+    return false;
+  }
+}
+
 /** 'proposals' stage: proposals are already shown; offer a fresh start. */
 function chatHandleProposals(profile, session, text) {
   if (/start a new brief|start over|new brief/i.test(text)) {
@@ -2034,10 +2045,9 @@ function chatHandleProposals(profile, session, text) {
       quickReplies: ['Yes, start fresh', 'Keep my brief'],
     };
   }
+  const brief = session.briefId ? getBrief(session.briefId) : getBriefByProfile(profile.id);
   return {
-    messages: [botText(
-      'Your suggestions are just above. Tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.',
-    )],
+    messages: [botText(proposalsStageText(hasActiveProposals(profile, brief)))],
     quickReplies: ['Start a new brief'],
   };
 }
@@ -2057,9 +2067,15 @@ function chatHandleConfirmReplace(profile, session, text) {
       quickReplies: STARTERS.map((label) => ({ label, fill: true })),
     };
   }
+  const keepBrief = session.briefId ? getBrief(session.briefId) : getBriefByProfile(profile.id);
+  const keepHas = hasActiveProposals(profile, keepBrief);
   return {
     patch: { stage: 'proposals' },
-    messages: [botText('Keeping your brief as it is. Your suggestions are just above.')],
+    messages: [botText(
+      keepHas
+        ? 'Keeping your brief as it is. Your suggestions are just above.'
+        : `Keeping your brief as it is. ${NO_SUGGESTIONS_TEXT}`,
+    )],
   };
 }
 
@@ -2108,8 +2124,11 @@ app.post('/api/chat/start', (req, res) => {
     const gated = brief.status === 'active' && brief.consent_save;
     const proposals = gated ? briefProposals(profile, brief) : [];
     const firstName = String(profile.name || 'friend').trim().split(/\s+/)[0] || 'friend';
+    const welcomeName = firstName.toLowerCase() === 'friend' ? '' : `, ${firstName}`;
     const messages = [botText(
-      `Welcome back${firstName.toLowerCase() === 'friend' ? '' : `, ${firstName}`}. Your brief is active. Here are your current suggestions.`,
+      proposals.length > 0
+        ? `Welcome back${welcomeName}. Your brief is active. Here are your current suggestions.`
+        : `Welcome back${welcomeName}. Your brief is active. ${NO_SUGGESTIONS_TEXT}`,
     )];
     const session = createChatSession({
       profileId: profile.id, stage: 'proposals', briefId: brief.id, transcript: messages,

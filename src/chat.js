@@ -107,6 +107,23 @@ export function briefMessage(brief) {
   };
 }
 
+/** Honest empty-state line for the proposals stage: used whenever no
+ *  suggestion cards exist, so the guide never promises cards that are not
+ *  actually shown. */
+export const NO_SUGGESTIONS_TEXT =
+  'Nothing gentle fits this brief right now. Our circle is small and still growing, so check back soon.';
+
+/**
+ * Intro text for the proposals stage. Pure function of whether any
+ * suggestion cards exist: never point at cards above when there are none.
+ */
+export function proposalsStageText(hasSuggestions) {
+  if (hasSuggestions) {
+    return 'Your suggestions are just above. Tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.';
+  }
+  return `${NO_SUGGESTIONS_TEXT} I can also start a new brief whenever you like.`;
+}
+
 const APPROVE_RE = /\b(looks good|find matches|approve|approved|yes|go ahead|let's do it|do it)\b/i;
 const STARTOVER_RE = /start over|new brief|from scratch/i;
 const EDIT_RE = /edit|change|rewrite|update/i;

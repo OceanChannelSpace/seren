@@ -294,7 +294,7 @@ export async function renderChat(mount, opts = {}) {
       if (data.brief) {
         await renderBotMessage({ kind: 'brief', text: data.briefText || BRIEF_DEFAULT_TEXT, brief: data.brief }, data);
       }
-      if (data.proposals) {
+      if (data.proposals && data.proposals.length) {
         await renderBotMessage({ kind: 'proposals', text: data.proposalsText || PROPOSALS_DEFAULT_TEXT, proposals: data.proposals }, data);
       }
       renderQuickReplies(data.quickReplies);

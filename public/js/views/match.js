@@ -91,7 +91,7 @@ export async function renderMatchDetail(root, ctx) {
   head.appendChild(av);
   const who = el(`<div></div>`);
   const sub = [person.pronouns, person.region].filter(Boolean).join(' · ');
-  who.appendChild(el(`<h2>${esc(person.name)}${person.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}</h2>`));
+  who.appendChild(el(`<h2>${esc(person.name)}</h2>`));
   if (sub) who.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
   head.appendChild(who);
   profileCard.appendChild(head);

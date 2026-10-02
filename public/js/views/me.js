@@ -100,7 +100,6 @@ export async function renderMe(root, ctx) {
     who.appendChild(el(`<h3>${esc(profile.name)}</h3>`));
     const sub = [profile.pronouns, profile.region].filter(Boolean).join(' · ');
     if (sub) who.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
-    if (profile.isSeed) who.appendChild(el(`<p class="person-sub">Demo member</p>`));
     head.appendChild(who);
     const summary = card([head]);
     if (profile.about) summary.appendChild(el(`<p class="about-text">${esc(profile.about)}</p>`));

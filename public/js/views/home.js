@@ -58,7 +58,7 @@ export function proposalCard(p, briefId) {
   const cand = p.candidate || {};
   const sub = [cand.pronouns, cand.region].filter(Boolean).join(' · ');
   const head = el(`<div class="person-head"></div>`);
-  head.appendChild(el(`<h3>${esc(cand.name || 'A fellow traveler')}${cand.isSeed ? ' <span class="pill pill-muted">demo</span>' : ''}</h3>`));
+  head.appendChild(el(`<h3>${esc(cand.name || 'A fellow traveler')}</h3>`));
   if (sub) head.appendChild(el(`<p class="person-sub">${esc(sub)}</p>`));
   c.appendChild(head);
 
