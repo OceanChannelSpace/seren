@@ -178,6 +178,23 @@ export const listHostAssists = () =>
 export const proposeHostAssist = (id, payload) =>
   request('POST', `/api/host-assists/${id}/propose`, payload);
 
+// --- synchronicity mode (v13) ---
+/** The curated deck: words plus open reflective prompts. */
+export const getSyncDeck = () =>
+  request('GET', '/api/sync/deck');
+/** Carry a beacon: { source: 'self_input'|'deck_draw', text?, cardId?, intentionType? }. */
+export const createBeacon = (payload) =>
+  request('POST', '/api/sync/beacons', payload);
+/** The caller's own beacons: active plus history. */
+export const myBeacons = () =>
+  request('GET', '/api/sync/beacons/mine');
+/** Withdraw the caller's active beacon. */
+export const withdrawMyBeacon = () =>
+  request('POST', '/api/sync/beacons/mine/withdraw', {});
+/** The caller's beacon matches (proposed etc.). */
+export const mySyncMatches = () =>
+  request('GET', '/api/sync/matches/mine');
+
 // --- connection briefs ---
 export const createBriefFromSession = (sessionId) =>
   request('POST', '/api/briefs', { sessionId });

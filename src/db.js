@@ -8,6 +8,8 @@
 //     saved_items, passes, messages, connection_plans.
 // v12: host_assists (Human Mode) + partial unique index for one open
 //      request per member.
+// v13: beacons + beacon_matches (Synchronicity Mode) + partial unique index
+//      for one active beacon per member.
 
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -526,6 +528,57 @@ if (userVersion < 12) {
   db.exec('PRAGMA user_version = 12');
 }
 
+// v13: synchronicity beacons (Synchronicity Mode, layer 2). A beacon is a
+// short, time-bound signal a member chooses to be matched on: self-input
+// (they name their own recurring synchronicity) or a draw from the curated
+// deck (card_id set). One active beacon per member at a time, enforced by a
+// partial UNIQUE index — the same pattern as host_assists (v12), so the
+// index (not just handler code) enforces the anti-spray rule under races.
+// 7-day default expiry. Beacons are private: never on profiles, never
+// searchable, revealed only to a matched counterpart at proposal stage.
+// beacon_matches records exact-normalized-text matches; each match creates
+// an introduction through the normal staged-consent flow (introduction_id).
+// FK cascades: deleting a profile removes its beacons and their matches,
+// honoring the "raw beacon text does not survive the member" rule.
+function migrateToV13() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS beacons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK(source IN ('self_input', 'deck_draw')),
+      raw_text TEXT NOT NULL,
+      normalized_text TEXT NOT NULL,
+      card_id TEXT,
+      intention_type TEXT CHECK(intention_type IN ('conversation', 'practice_partner', 'collaborator', 'local_connection', 'open')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'matched', 'expired', 'withdrawn')),
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS beacon_matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      beacon_a_id INTEGER NOT NULL REFERENCES beacons(id) ON DELETE CASCADE,
+      beacon_b_id INTEGER NOT NULL REFERENCES beacons(id) ON DELETE CASCADE,
+      match_type TEXT NOT NULL DEFAULT 'exact' CHECK(match_type IN ('exact', 'resonance')),
+      status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN ('proposed', 'accepted', 'declined', 'expired')),
+      proposed_at TEXT NOT NULL,
+      introduction_id INTEGER REFERENCES introductions(id) ON DELETE SET NULL
+    )
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_beacons_active
+    ON beacons(profile_id) WHERE status = 'active'
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_beacons_normalized ON beacons(normalized_text)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_beacons_profile ON beacons(profile_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_beacon_matches_intro ON beacon_matches(introduction_id)');
+}
+if (userVersion < 13) {
+  migrateToV13();
+  db.exec('PRAGMA user_version = 13');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -911,6 +964,9 @@ export function updateProfile(id, fields) {
  * - decline_blocks, guide_sessions, chat_sessions (no FK to profiles):
  *   deleted explicitly. Profile-less onboarding chat sessions
  *   (profile_id NULL) are untouched.
+ * - beacons and beacon_matches: removed by their ON DELETE CASCADE FKs,
+ *   so no private beacon text survives the member (per the spec's data
+ *   retention rule).
  * Returns true when a profile row was actually removed.
  */
 export function deleteProfile(id) {
@@ -1436,6 +1492,274 @@ export function listOpenHostAssists() {
 export function setHostAssistStatus(id, status) {
   db.prepare('UPDATE host_assists SET status = ? WHERE id = ?').run(status, id);
   return getHostAssist(id);
+}
+
+// ---------- synchronicity beacons ----------
+// A beacon is a short, time-bound signal a member chooses to be matched on.
+// Matching is exact-normalized-text only in the MVP (no resonance/cluster
+// matching — that is phase 2 per the spec). Beacons are private by default:
+// no endpoint reveals one member's beacon text to another member except the
+// matched counterpart at proposal stage, via the introduction note.
+//
+// The match check runs synchronously at beacon creation (simple,
+// deterministic, testable): after inserting a beacon, scan for an eligible
+// exact match and propose. See trySynchronicityMatch.
+
+/** Default beacon lifetime: 7 days (spec Flow A/B). */
+export const BEACON_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Normalize beacon text for exact matching: lowercase, trim, collapse
+ * internal whitespace, strip surrounding punctuation, and light
+ * singularization ("rivers" -> "river"). Deterministic and explainable.
+ */
+export function normalizeBeaconText(text) {
+  let t = String(text || '').toLowerCase().trim();
+  t = t.replace(/[\s\u00a0]+/g, ' '); // collapse whitespace
+  t = t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ''); // strip edge punctuation
+  // Light singularization on the whole string (covers single-word beacons).
+  if (t.length > 4 && t.endsWith('ies')) t = t.slice(0, -3) + 'y';
+  else if (t.length > 4 && /(s|sh|ch|x|z)es$/.test(t)) t = t.slice(0, -2);
+  else if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+  return t;
+}
+
+function toBeacon(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    source: row.source,
+    rawText: row.raw_text,
+    normalizedText: row.normalized_text,
+    cardId: row.card_id || null,
+    intentionType: row.intention_type || null,
+    status: row.status,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+  };
+}
+
+const getBeaconStmt = db.prepare('SELECT * FROM beacons WHERE id = ?');
+export function getBeacon(id) {
+  return toBeacon(getBeaconStmt.get(id));
+}
+
+/** Mark active-but-past-expiry beacons 'expired' (for one profile, or all). */
+export function expireStaleBeacons(profileId = null) {
+  const now = new Date().toISOString();
+  let beaconsExpired;
+  if (profileId === null) {
+    beaconsExpired = db.prepare(
+      `UPDATE beacons SET status = 'expired' WHERE status = 'active' AND expires_at <= ?`,
+    ).run(now).changes;
+  } else {
+    beaconsExpired = db.prepare(
+      `UPDATE beacons SET status = 'expired' WHERE profile_id = ? AND status = 'active' AND expires_at <= ?`,
+    ).run(profileId, now).changes;
+  }
+  // A proposed match cannot outlive its beacons: once either side expired,
+  // the proposal window is over. Gently closed, never shaming.
+  const matchesExpired = db.prepare(`
+    UPDATE beacon_matches SET status = 'expired'
+    WHERE status = 'proposed'
+      AND (beacon_a_id IN (SELECT id FROM beacons WHERE status = 'expired')
+        OR beacon_b_id IN (SELECT id FROM beacons WHERE status = 'expired'))
+  `).run().changes;
+  return { beaconsExpired, matchesExpired };
+}
+
+/**
+ * The member's currently active beacon, or null. Lazily expires stale rows
+ * first so an expired beacon never blocks a new one (belt and braces
+ * alongside the host sweep endpoint).
+ */
+export function getActiveBeacon(profileId) {
+  expireStaleBeacons(profileId);
+  return toBeacon(db.prepare(
+    `SELECT * FROM beacons WHERE profile_id = ? AND status = 'active' LIMIT 1`,
+  ).get(profileId));
+}
+
+/** All of one member's beacons, newest first (active + history). Private: caller's own rows only. */
+export function listBeaconsFor(profileId) {
+  expireStaleBeacons(profileId);
+  return db.prepare('SELECT * FROM beacons WHERE profile_id = ? ORDER BY id DESC')
+    .all(profileId).map(toBeacon);
+}
+
+/**
+ * Withdraw the member's active beacon. Returns the updated beacon, or null
+ * when there is no active beacon.
+ */
+export function withdrawActiveBeacon(profileId) {
+  const active = getActiveBeacon(profileId);
+  if (!active) return null;
+  db.prepare(`UPDATE beacons SET status = 'withdrawn' WHERE id = ?`).run(active.id);
+  return getBeacon(active.id);
+}
+
+function toBeaconMatch(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    beaconAId: row.beacon_a_id,
+    beaconBId: row.beacon_b_id,
+    matchType: row.match_type,
+    status: row.status,
+    proposedAt: row.proposed_at,
+    introductionId: row.introduction_id ?? null,
+  };
+}
+
+/**
+ * All beacon matches touching one member's beacons, newest first. Privacy:
+ * only the match row itself — the counterpart's beacon text is revealed to
+ * the caller only through the matched introduction's note (proposal stage),
+ * never as a raw beacon row.
+ */
+export function listBeaconMatchesFor(profileId) {
+  return db.prepare(`
+    SELECT m.* FROM beacon_matches m
+    JOIN beacons ba ON ba.id = m.beacon_a_id
+    JOIN beacons bb ON bb.id = m.beacon_b_id
+    WHERE ba.profile_id = ? OR bb.profile_id = ?
+    ORDER BY m.id DESC
+  `).all(profileId, profileId).map(toBeaconMatch);
+}
+
+/**
+ * Keep beacon matches in step with the introduction lifecycle (called by
+ * the introduction respond/withdraw/end handlers):
+ * accepted/accepted_with_boundary -> 'accepted'; declined/declined_hidden ->
+ * 'declined'; withdrawn/ended -> 'expired'.
+ */
+export function syncBeaconMatchForIntroduction(introductionId, introStatus) {
+  const map = {
+    accepted: 'accepted',
+    accepted_with_boundary: 'accepted',
+    declined: 'declined',
+    declined_hidden: 'declined',
+    withdrawn: 'expired',
+    ended: 'expired',
+  };
+  const next = map[introStatus];
+  if (!next) return;
+  db.prepare(`
+    UPDATE beacon_matches SET status = ? WHERE introduction_id = ? AND status = 'proposed'
+  `).run(next, introductionId);
+}
+
+function insertBeacon({ profileId, source, rawText, normalizedText, cardId, intentionType }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO beacons
+      (profile_id, source, raw_text, normalized_text, card_id, intention_type,
+       status, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+  `).run(
+    profileId, source, rawText, normalizedText, cardId || null, intentionType || null,
+    now, new Date(Date.now() + BEACON_TTL_MS).toISOString(),
+  );
+  return getBeacon(Number(result.lastInsertRowid));
+}
+
+/**
+ * Eligibility guard for a synchronicity match between two beacon holders.
+ * Mirrors POST /api/connections/request: both must have opted into
+ * introductions, be discoverable and unpaused, not block each other, not be
+ * decline-blocked in either direction, and have no live introduction pair
+ * already (the pair guard: anything not withdrawn/declined/declined_hidden/
+ * ended counts as live).
+ */
+function beaconPairEligible(profileA, profileB) {
+  if (!profileA || !profileB) return false;
+  if (profileA.id === profileB.id) return false;
+  if (!profileA.consents?.introductions || !profileB.consents?.introductions) return false;
+  if (profileA.consentSettings?.paused || profileB.consentSettings?.paused) return false;
+  if (profileA.consentSettings?.discoveryEnabled === false
+    || profileB.consentSettings?.discoveryEnabled === false) return false;
+  if (isBlockedBetween(profileA.id, profileB.id)) return false;
+  if (hasDeclineBlock(profileA.id, profileB.id) || hasDeclineBlock(profileB.id, profileA.id)) return false;
+  const live = db.prepare(`
+    SELECT 1 FROM introductions
+    WHERE status NOT IN ('withdrawn', 'declined', 'declined_hidden', 'ended')
+      AND ((requester_id = ? AND proposed_id = ?) OR (requester_id = ? AND proposed_id = ?))
+    LIMIT 1
+  `).get(profileA.id, profileB.id, profileB.id, profileA.id);
+  return !live;
+}
+
+/**
+ * Scan for an eligible exact match for `beacon` and propose it. Called
+ * synchronously at beacon creation (documented choice: deterministic,
+ * testable, no background machinery in the MVP).
+ *
+ * On a match: both beacons -> 'matched', a beacon_matches row is created in
+ * 'proposed' status, and an introduction is created through the existing
+ * staged mutual-consent flow. The requester is the LATER beacon holder (the
+ * member whose creation triggered this scan); the proposed side is the
+ * earlier holder. The introduction note carries the shared-beacon reason in
+ * calm, low-claim copy: the system asserts only that both people carried
+ * the same word, never why.
+ *
+ * Returns { match, introduction } or { match: null, introduction: null }.
+ */
+export function trySynchronicityMatch(beacon) {
+  const now = new Date().toISOString();
+  const candidates = db.prepare(`
+    SELECT * FROM beacons
+    WHERE status = 'active'
+      AND expires_at > ?
+      AND normalized_text = ?
+      AND profile_id != ?
+    ORDER BY created_at ASC, id ASC
+  `).all(now, beacon.normalizedText, beacon.profileId);
+
+  const mine = getProfile(beacon.profileId);
+  for (const row of candidates) {
+    const other = toBeacon(row);
+    const otherProfile = getProfile(other.profileId);
+    if (!beaconPairEligible(mine, otherProfile)) continue;
+
+    const word = other.normalizedText;
+    const intro = createIntroduction({
+      requesterId: mine.id,
+      proposedId: otherProfile.id,
+      intention: 'A shared synchronicity',
+      note: `You both carried '${word}' this week.\n\nIf you want, share what it has been bringing up for you. Only as much as feels good. Passing is always fine, and says nothing about what you noticed.`,
+      score: 0,
+    });
+
+    db.prepare(`UPDATE beacons SET status = 'matched' WHERE id = ?`).run(beacon.id);
+    db.prepare(`UPDATE beacons SET status = 'matched' WHERE id = ?`).run(other.id);
+    const mr = db.prepare(`
+      INSERT INTO beacon_matches
+        (beacon_a_id, beacon_b_id, match_type, status, proposed_at, introduction_id)
+      VALUES (?, ?, 'exact', 'proposed', ?, ?)
+    `).run(beacon.id, other.id, now, intro.id);
+    return { match: toBeaconMatch(db.prepare('SELECT * FROM beacon_matches WHERE id = ?').get(Number(mr.lastInsertRowid))), introduction: intro };
+  }
+  return { match: null, introduction: null };
+}
+
+/**
+ * Create a beacon and run the synchronous match check, atomically.
+ * Throws the UNIQUE-violation error when the member already has an active
+ * beacon (the partial index is the enforcer); the handler maps it to 409.
+ * @returns { beacon, match, introduction } — match/introduction are null when no eligible match was found.
+ */
+export function createBeaconWithMatch({ profileId, source, rawText, normalizedText, cardId = null, intentionType = null }) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const beacon = insertBeacon({ profileId, source, rawText, normalizedText, cardId, intentionType });
+    const { match, introduction } = trySynchronicityMatch(beacon);
+    db.exec('COMMIT');
+    return { beacon: getBeacon(beacon.id), match, introduction };
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
 }
 
 // ---------- guide sessions ----------

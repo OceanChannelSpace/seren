@@ -348,3 +348,68 @@ proposals are computed only when the brief is `active` **and** holds
 `POST /api/auth/relink` is for a frontend that lost its stored profile id:
 on an exact (case-insensitive) email+name match it returns only
 `{profileId, name}`; otherwise 404 `not_found`.
+
+## Addendum — v13: Synchronicity Mode (2026-10-02)
+
+A beacon is a short, time-bound signal a member chooses to be matched on:
+self-input (they name their own recurring synchronicity) or a draw from the
+curated deck (`src/sync-deck.js`, 48 human-reviewed starter cards; the spec
+targets 100-150). One active beacon per member at a time (partial unique
+index `uq_beacons_active`), 7-day expiry.
+
+Matching is exact-normalized-text only in the MVP (lowercase, trim,
+collapsed whitespace, light singularization; no resonance/cluster matching).
+The match check runs synchronously at beacon creation (deterministic,
+testable). On an eligible match, both beacons become `matched`, a
+`beacon_matches` row is created in `proposed` status, and an introduction is
+created through the existing staged mutual-consent flow (requester = the
+later beacon holder). The introduction note carries the shared-beacon
+reason in low-claim copy, e.g. "You both carried 'river' this week."
+Proposals appear in the normal Requests view (`GET /api/introductions`).
+
+Eligibility mirrors `POST /api/connections/request`: both members opted
+into introductions, unpaused, discovery enabled, no block either way, no
+decline block either way, and no live (non-withdrawn/declined/ended)
+introduction between the pair.
+
+Beacons are private: never on profiles, never searchable, never browsable.
+Only the matched counterpart sees the shared word, inside the introduction
+note at proposal stage. Expiry is handled lazily on every beacon read
+(`expireStaleBeacons`) plus a host-only sweep; there is no cron.
+
+### Schema v13 (`PRAGMA user_version = 13`)
+
+| Table | Columns |
+|---|---|
+| `beacons` | `id`, `profile_id` FK → profiles ON DELETE CASCADE, `source` (`self_input`\|`deck_draw`), `raw_text`, `normalized_text`, `card_id` nullable, `intention_type` nullable (`conversation`\|`practice_partner`\|`collaborator`\|`local_connection`\|`open`), `status` (`active`\|`matched`\|`expired`\|`withdrawn`), `created_at`, `expires_at` |
+| `beacon_matches` | `id`, `beacon_a_id`/`beacon_b_id` FK → beacons ON DELETE CASCADE, `match_type` (`exact`, `resonance` reserved for phase 2), `status` (`proposed`\|`accepted`\|`declined`\|`expired`), `proposed_at`, `introduction_id` nullable FK → introductions ON DELETE SET NULL |
+
+Partial unique index `uq_beacons_active ON beacons(profile_id) WHERE status = 'active'`.
+
+### Endpoints
+
+- `GET /api/sync/deck` → `{cards:[{id,word,prompt}]}`. Curated content, safe to expose.
+- `POST /api/sync/beacons` — body `{source, text?, cardId?, intentionType?}`.
+  `self_input`: `text` required 1-60 chars, passes text moderation (links,
+  contact info, mentions, promotions blocked with a plain message).
+  `deck_draw`: `cardId` must exist. 409 `conflict_state` when an active
+  beacon already exists. 201 → `{beacon, match}` where `match` is null or
+  `{id, status, sharedWord, introductionId, introduction}`.
+- `GET /api/sync/beacons/mine` → `{beacons:[...]}` (caller's own, active + history).
+- `POST /api/sync/beacons/mine/withdraw` → withdraws the active beacon (404 when none).
+- `GET /api/sync/matches/mine` → `{matches:[{id, status, sharedWord, otherProfileId, introductionId, introduction, proposedAt}]}`.
+- `POST /api/sync/sweep` — host-only (`requireHost`); marks past-expiry
+  beacons `expired` and closes stale proposed matches. Returns
+  `{swept:{beaconsExpired, matchesExpired}}`.
+
+Beacon wire shape: `{id, source, text, word, cardId, intentionType, status,
+createdAt, expiresAt}`.
+
+### Frontend
+
+Modes screen gains a ninth card ("Synchronicity") with two paths: "Name
+your own" (text input) and "Draw from the deck" (calm shuffle/pause/reveal,
+"Here is what came up.", accept / redraw once per draw session / use my own
+instead). Shows the active beacon with expiry, a withdraw option, gentle
+expiry close-out ("No one else carried 'X' that week..."), and proposed
+matches linking into Requests.

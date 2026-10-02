@@ -11,7 +11,9 @@ import {
   PRACTICE_VALUES, INTENTION_VALUES,
   CONNECTION_TYPE_VALUES, CONNECTION_FORMATS, COMMITMENT_LEVELS, TONES,
   CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, RESPONSE_KINDS, REPORT_REASONS,
+  BEACON_SOURCES, BEACON_INTENTIONS,
 } from './constants.js';
+import { getSyncCard } from './sync-deck.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -841,5 +843,72 @@ export function validateOnboardingMessage(body) {
   }
   checkId(errors, body, 'sessionId');
   checkShortText(errors, body.text, 'text', { required: true, min: 1, max: 2000 });
+  return { ok: errors.length === 0, errors };
+}
+
+/* ------------------------------------------------------------------ */
+/* Synchronicity Mode (v13): beacon input validation.                  */
+/* ------------------------------------------------------------------ */
+
+// Beacon text moderation (spec: block contact info, URLs, solicitation,
+// targeted mentions with a plain explanation). Beacons are private and
+// never browsable, so this is a light guard, not a full content filter.
+const BEACON_URL_RE = /https?:\/\/|www\./i;
+const BEACON_EMAIL_RE = /\S+@\S+\.\S+/;
+const BEACON_PHONE_RE = /(\+?\d[\d\s().-]{6,}\d|\d{7,})/;
+const BEACON_MENTION_RE = /@\w/;
+const BEACON_SOLICIT_RE = /\b(buy now|for sale|discount|venmo|cash\s?app|zelle|paypal|whatsapp|telegram|signal app|dm me|message me|crypto|investment opportunity|limited offer|act now)\b/i;
+
+const BEACON_MODERATION_MESSAGE =
+  'Beacons are for words, images, places, or themes. Please leave out links, contact info, mentions, and promotions.';
+
+/** Plain-language moderation check for self-input beacon text. Returns a message or null. */
+export function moderateBeaconText(text) {
+  const t = String(text || '');
+  if (BEACON_URL_RE.test(t) || BEACON_EMAIL_RE.test(t) || BEACON_PHONE_RE.test(t)
+    || BEACON_MENTION_RE.test(t) || BEACON_SOLICIT_RE.test(t)) {
+    return BEACON_MODERATION_MESSAGE;
+  }
+  return null;
+}
+
+/**
+ * Beacon creation: {source, text?, cardId?, intentionType?}
+ * - self_input: text required, 1..60 chars, passes moderation.
+ * - deck_draw: cardId required, must be a real deck card.
+ * - intentionType optional: one of BEACON_INTENTIONS.
+ */
+export function validateBeaconInput(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  const { source, text, cardId, intentionType } = body;
+  if (!BEACON_SOURCES.includes(source)) {
+    push(errors, 'source', `source must be one of: ${BEACON_SOURCES.join(', ')}`);
+  }
+  if (source === 'self_input') {
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      push(errors, 'text', 'text is required for a self-input beacon');
+    } else if (text.trim().length > 60) {
+      push(errors, 'text', 'text must be at most 60 characters');
+    } else {
+      const blocked = moderateBeaconText(text.trim());
+      if (blocked) push(errors, 'text', blocked);
+    }
+  }
+  if (source === 'deck_draw') {
+    if (typeof cardId !== 'string' || cardId.trim().length === 0) {
+      push(errors, 'cardId', 'cardId is required for a deck-draw beacon');
+    } else if (!getSyncCard(cardId.trim())) {
+      push(errors, 'cardId', 'cardId does not match a deck card');
+    }
+  }
+  if (intentionType !== undefined && intentionType !== null && intentionType !== '') {
+    if (!BEACON_INTENTIONS.includes(intentionType)) {
+      push(errors, 'intentionType', `intentionType must be one of: ${BEACON_INTENTIONS.join(', ')}`);
+    }
+  }
   return { ok: errors.length === 0, errors };
 }

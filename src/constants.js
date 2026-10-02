@@ -344,6 +344,12 @@ export const REPORT_REASON_LABELS = Object.freeze({
   'other': 'Something else',
 });
 
+// Synchronicity Mode (v13): beacon sources and intention types.
+export const BEACON_SOURCES = Object.freeze(['self_input', 'deck_draw']);
+export const BEACON_INTENTIONS = Object.freeze([
+  'conversation', 'practice_partner', 'collaborator', 'local_connection', 'open',
+]);
+
 // Wire error codes ({"error":{"code","message"}}).
 export const ERROR_CODES = Object.freeze({
   VALIDATION_ERROR: 'validation_error',

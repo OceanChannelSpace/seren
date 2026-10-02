@@ -20,8 +20,9 @@ import {
   validateBriefDraft, validateBriefUpdate, validateBriefApprove,
   validateChatStart, validateChatMessage, validateRelink,
   validateOnboardingStart, validateOnboardingMessage, validateAgentInput,
-  validateHostAssistInput, validateHostAssistProposal,
+  validateHostAssistInput, validateHostAssistProposal, validateBeaconInput,
 } from './validate.js';
+import { SYNC_DECK, getSyncCard } from './sync-deck.js';
 import {
   startOnboarding, handleOnboardingTurn, questionForStage,
   quickRepliesForStage, isOnboardingStage,
@@ -79,6 +80,16 @@ import {
   listHostAssistsFor,
   listOpenHostAssists,
   setHostAssistStatus,
+  // synchronicity beacons (v13)
+  normalizeBeaconText,
+  getBeacon,
+  getActiveBeacon,
+  listBeaconsFor,
+  withdrawActiveBeacon,
+  createBeaconWithMatch,
+  listBeaconMatchesFor,
+  expireStaleBeacons,
+  syncBeaconMatchForIntroduction,
   listMessages,
   createMessage,
   getConnectionPlan,
@@ -831,6 +842,9 @@ app.post('/api/introductions/:id/respond', (req, res) => {
     responderNote: (req.body.note || '').trim(),
   });
 
+  // Keep a synchronicity match in step with its introduction (if any).
+  syncBeaconMatchForIntroduction(intro.id, targetStatus);
+
   // A decline is durable: the recipient will not receive further direct
   // requests from this requester unless they later choose to allow them.
   if (targetStatus === 'declined' || targetStatus === 'declined_hidden') {
@@ -877,6 +891,7 @@ app.post('/api/introductions/:id/end', (req, res) => {
       `Cannot end a connection with status "${intro.status}".`);
   }
   res.json(toWireIntroduction(setIntroductionStatus(intro.id, INTRO_STATUS.ENDED)));
+  syncBeaconMatchForIntroduction(intro.id, INTRO_STATUS.ENDED);
 });
 
 /**
@@ -908,6 +923,8 @@ function transition(targetStatus, role) {
     }
 
     const updated = setIntroductionStatus(id, targetStatus);
+    // Keep a synchronicity match in step with its introduction (if any).
+    syncBeaconMatchForIntroduction(id, targetStatus);
     // A decline is durable: the recipient will not receive further direct
     // requests from this requester unless they later choose to allow them.
     if (targetStatus === 'declined') {
@@ -1338,6 +1355,171 @@ app.post('/api/host-assists/:id/propose', (req, res) => {
     assist: toWireHostAssist(updated),
     introduction: toWireIntroduction(intro),
   });
+});
+
+// ---------- synchronicity mode ----------
+// A beacon is a short, time-bound signal a member chooses to be matched on
+// (self-input or a draw from the curated deck). Matching is exact-
+// normalized-text only in the MVP and runs synchronously at beacon
+// creation (see trySynchronicityMatch in src/db.js): deterministic and
+// testable, no background machinery. A match creates an introduction through
+// the existing staged mutual-consent flow; the introduction note carries
+// the shared-beacon reason. Beacons are private: no endpoint exposes one
+// member's beacon text to another except the matched counterpart, via the
+// introduction note, at proposal stage.
+
+function toWireBeacon(beacon) {
+  if (!beacon) return null;
+  return {
+    id: beacon.id,
+    source: beacon.source,
+    text: beacon.rawText,
+    word: beacon.normalizedText,
+    cardId: beacon.cardId,
+    intentionType: beacon.intentionType,
+    status: beacon.status,
+    createdAt: beacon.createdAt,
+    expiresAt: beacon.expiresAt,
+  };
+}
+
+/** The curated deck: words and open reflective prompts. Curated content, safe to expose. */
+app.get('/api/sync/deck', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  res.json({ cards: SYNC_DECK.map((c) => ({ id: c.id, word: c.word, prompt: c.prompt })) });
+});
+
+/**
+ * Carry a beacon. On creation, SEREN quietly checks for someone else
+ * carrying the same word; when an eligible match exists, both members get
+ * the proposal through the normal introduction flow (visible in Requests).
+ */
+app.post('/api/sync/beacons', (req, res) => {
+  const { ok, errors } = validateBeaconInput(req.body);
+  if (!ok) return validationErr(res, errors);
+
+  // Identity always comes from the token; a body profileId is never trusted.
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  if (!profile.consents || profile.consents.introductions !== true) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'This profile has not opted into introductions.');
+  }
+  if (profile.consentSettings?.paused) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'Discovery is paused on this profile. Unpause to carry a beacon.');
+  }
+
+  // One active beacon per member at a time. The partial unique index is the
+  // real enforcer (races included); the pre-check gives the friendly 409.
+  if (getActiveBeacon(profile.id)) {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'You already have an active beacon. Withdraw it before carrying a new one.');
+  }
+
+  let rawText;
+  let cardId = null;
+  if (req.body.source === 'deck_draw') {
+    const card = getSyncCard(String(req.body.cardId).trim());
+    if (!card) {
+      return validationErr(res, [{ field: 'cardId', message: 'cardId does not match a deck card' }]);
+    }
+    rawText = card.word;
+    cardId = card.id;
+  } else {
+    rawText = String(req.body.text).trim();
+  }
+  const normalizedText = normalizeBeaconText(rawText);
+  if (!normalizedText) {
+    return validationErr(res, [{ field: 'text', message: 'text must contain at least one letter or number' }]);
+  }
+
+  try {
+    const { beacon, match, introduction } = createBeaconWithMatch({
+      profileId: profile.id,
+      source: req.body.source,
+      rawText,
+      normalizedText,
+      cardId,
+      intentionType: req.body.intentionType || null,
+    });
+    return res.status(201).json({
+      beacon: toWireBeacon(beacon),
+      // Null when nobody else is carrying the same word right now.
+      match: match ? {
+        id: match.id,
+        status: match.status,
+        sharedWord: normalizedText,
+        introductionId: match.introductionId,
+        introduction: toWireIntroduction(introduction),
+      } : null,
+    });
+  } catch (e) {
+    // Belt-and-suspenders: UNIQUE race on the active-beacon index.
+    if (String(e && e.message).includes('UNIQUE')) {
+      return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+        'You already have an active beacon. Withdraw it before carrying a new one.');
+    }
+    throw e;
+  }
+});
+
+/** The caller's own beacons: active plus history. Nobody else's. */
+app.get('/api/sync/beacons/mine', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  res.json({ beacons: listBeaconsFor(profile.id).map(toWireBeacon) });
+});
+
+/** Withdraw the caller's active beacon. Withdrawing is consequence-free. */
+app.post('/api/sync/beacons/mine/withdraw', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const beacon = withdrawActiveBeacon(profile.id);
+  if (!beacon) {
+    return err(res, 404, ERROR_CODES.NOT_FOUND,
+      'You do not have an active beacon to withdraw.');
+  }
+  res.json({ beacon: toWireBeacon(beacon) });
+});
+
+/**
+ * The caller's beacon matches. The counterpart's beacon text appears only
+ * inside the shared introduction's note (proposal stage), never as a raw
+ * beacon row; otherBeacon exposes just the profile id and the shared word.
+ */
+app.get('/api/sync/matches/mine', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const matches = listBeaconMatchesFor(profile.id).map((m) => {
+    const a = getBeacon(m.beaconAId);
+    const b = getBeacon(m.beaconBId);
+    const mine = a && a.profileId === profile.id ? a : b;
+    const other = mine === a ? b : a;
+    const intro = m.introductionId ? getIntroduction(m.introductionId) : null;
+    return {
+      id: m.id,
+      status: m.status,
+      sharedWord: (other || mine)?.normalizedText || '',
+      otherProfileId: other ? other.profileId : null,
+      introductionId: m.introductionId,
+      introduction: toWireIntroduction(intro),
+      proposedAt: m.proposedAt,
+    };
+  });
+  res.json({ matches });
+});
+
+/**
+ * Host-only expiry sweep: marks past-expiry beacons 'expired' and closes
+ * proposed matches whose beacons expired. There is no cron; expiry is also
+ * handled lazily on every beacon read (see expireStaleBeacons), so this is
+ * a tidy-up pass a host can run, not a correctness dependency.
+ */
+app.post('/api/sync/sweep', (req, res) => {
+  if (!requireHost(req, res)) return;
+  res.json({ swept: expireStaleBeacons(null) });
 });
 
 // ---------- guide (AI-superconnector flow) ----------
