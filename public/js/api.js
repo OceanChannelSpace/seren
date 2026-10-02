@@ -9,6 +9,8 @@
 // as a *target* id (e.g. "view profile 7"). Extra leading profileId params
 // are accepted for call-site compatibility but ignored.
 
+import { setProfileId } from './state.js';
+
 export class ApiError extends Error {
   constructor(status, code, message, details) {
     super(message || code || 'Request failed');
@@ -29,6 +31,17 @@ async function request(method, path, body) {
   try { json = await res.json(); } catch { /* non-JSON */ }
   if (!res.ok) {
     const e = (json && json.error) || {};
+    // The session token is missing or invalid (e.g. pre-token members after
+    // the auth upgrade, or a cleared cookie). Drop the local identity and
+    // send the member back to the welcome screen, where the relink card
+    // ("reconnect this device") re-issues a fresh token. Uses location.hash
+    // directly to avoid an import cycle with the router.
+    if (res.status === 401 && path !== '/api/auth/relink') {
+      try { setProfileId(null); } catch { /* noop */ }
+      if (typeof window !== 'undefined' && window.location.hash !== '#/welcome') {
+        window.location.hash = '#/welcome';
+      }
+    }
     throw new ApiError(res.status, e.code || 'request_failed', e.message || `Request failed (${res.status})`, e.details);
   }
   return json;
