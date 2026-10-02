@@ -135,11 +135,16 @@ const block = await api('POST', '/api/blocks', { blockedId: b.id }, a._auth);
 assert.equal(block.status, 201);
 
 // Agents: one operated by A, one by B.
+const VETTING = {
+  no_manipulation: true, no_covert_data: true, human_accountable: true,
+  clear_purpose: true, respects_consent: true,
+};
 const agentA = await api('POST', '/api/agents', {
   name: 'Ada Agent',
   description: 'A gentle dream-work companion.',
   capabilities: ['dream exploration'],
   trustNote: 'I built this agent and vouch for its calm approach.',
+  vetting: VETTING,
 }, a._auth);
 assert.equal(agentA.status, 201);
 const agentB = await api('POST', '/api/agents', {
@@ -147,6 +152,7 @@ const agentB = await api('POST', '/api/agents', {
   description: 'A breathwork timer companion.',
   capabilities: ['breathwork timing'],
   trustNote: 'I built this agent and vouch for its steady rhythm.',
+  vetting: VETTING,
 }, b._auth);
 assert.equal(agentB.status, 201);
 

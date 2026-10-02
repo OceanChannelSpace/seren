@@ -1,4 +1,4 @@
-// SEREN guide chat — the conversational front door of the superconnector.
+// SEREN guide chat — the conversational front door of the rule-based connection guide.
 // Mounted by home.js for signed-in users. Talks to the chat backend via
 // api.js (see the contract note on chatStart/chatMessage/chatResume there).
 //

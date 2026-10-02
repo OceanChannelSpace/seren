@@ -267,6 +267,10 @@ test('POST /api/agents registers an agent with operator attestation', async () =
     description: 'A dream-work companion.',
     capabilities: ['dream interpretation', 'symbol exploration'],
     trustNote: 'I built Oneiro and vouch for its gentle approach.',
+    vetting: {
+      no_manipulation: true, no_covert_data: true, human_accountable: true,
+      clear_purpose: true, respects_consent: true,
+    },
   }, op);
   assert.equal(status, 201);
   assert.equal(json.name, 'Oneiro');
@@ -275,6 +279,7 @@ test('POST /api/agents registers an agent with operator attestation', async () =
   assert.equal(json.operatorName, 'Operator');
   assert.deepEqual(json.capabilities, ['dream interpretation', 'symbol exploration']);
   assert.equal(json.trustNote, 'I built Oneiro and vouch for its gentle approach.');
+  assert.equal(json.trustTier, 'operator-attested');
 });
 
 test('POST /api/agents validates input', async () => {
@@ -295,6 +300,10 @@ test('POST /api/agents validates input', async () => {
   const { status: s3, json: j3 } = await api('POST', '/api/agents', {
     operatorProfileId: 99999,
     name: 'Ghost Operator',
+    vetting: {
+      no_manipulation: true, no_covert_data: true, human_accountable: true,
+      clear_purpose: true, respects_consent: true,
+    },
   }, op);
   assert.equal(s3, 201, 'self-asserted operatorProfileId is ignored');
   assert.equal(j3.operatorProfileId, op.id, 'operator comes from the session token');
@@ -304,6 +313,10 @@ test('GET /api/agents lists visible agents; hidden agents are excluded', async (
   const op = await createProfile({ name: 'Op Three' });
   const { json: a1 } = await api('POST', '/api/agents', {
     name: 'Visible Agent', capabilities: ['listening'],
+    vetting: {
+      no_manipulation: true, no_covert_data: true, human_accountable: true,
+      clear_purpose: true, respects_consent: true,
+    },
   }, op);
   assert.equal(a1.id > 0, true);
   const { status, json } = await api('GET', '/api/agents');
@@ -323,6 +336,10 @@ test('only the registering operator can edit or hide an agent', async () => {
   const other = await createProfile({ name: 'Stranger' });
   const { json: agent } = await api('POST', '/api/agents', {
     name: 'Guarded Agent', description: 'v1',
+    vetting: {
+      no_manipulation: true, no_covert_data: true, human_accountable: true,
+      clear_purpose: true, respects_consent: true,
+    },
   }, op);
 
   const { status: editForbidden } = await api('PATCH', `/api/agents/${agent.id}`, {
@@ -434,12 +451,20 @@ test('POST /api/agents rejects non-public endpoint hosts', async () => {
   ]) {
     const { status, json } = await api('POST', '/api/agents', {
       name: `E-${Math.abs(hashStr(url))}`, endpointUrl: url,
+      vetting: {
+        no_manipulation: true, no_covert_data: true, human_accountable: true,
+        clear_purpose: true, respects_consent: true,
+      },
     }, op);
     assert.equal(status, 400, `should reject ${url}`);
     assert.ok(json.error.details.some((d) => d.field === 'endpointUrl'), url);
   }
   const { status: ok } = await api('POST', '/api/agents', {
     name: 'E-public', endpointUrl: 'https://agents.example.org/chat',
+    vetting: {
+      no_manipulation: true, no_covert_data: true, human_accountable: true,
+      clear_purpose: true, respects_consent: true,
+    },
   }, op);
   assert.equal(ok, 201, 'public https endpoint accepted');
 });

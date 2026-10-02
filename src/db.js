@@ -15,7 +15,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
-import { INTRO_STATUS } from './constants.js';
+import { INTRO_STATUS, AGENT_VETTING_KEYS } from './constants.js';
 
 const DB_PATH = resolve(process.env.DB_PATH || './data/seren.db');
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -213,7 +213,7 @@ if (userVersion < 1) {  migrateToV1();
   db.exec('PRAGMA user_version = 1');
 }
 
-// v2: guide sessions for the AI-superconnector flow + profile values.
+// v2: guide sessions for the rule-based connection guide flow + profile values.
 function migrateToV2() {
   addColumnIfMissing('profiles', 'values_json', 'TEXT NOT NULL DEFAULT \'[]\'');
   db.exec(`
@@ -577,6 +577,21 @@ function migrateToV13() {
 if (userVersion < 13) {
   migrateToV13();
   db.exec('PRAGMA user_version = 13');
+}
+
+// v14: agent vetting checklist + host review tier. The registry previously
+// carried only a free-text operator declaration ("unverified"). Operators now
+// attest to five concrete benevolence criteria at registration (stored as
+// JSON); a host can additionally mark a listing reviewed. Existing agents
+// keep empty vetting and display as "Unverified". The legacy `verified`
+// column is left untouched (deprecated, never displayed as "Verified").
+function migrateToV14() {
+  addColumnIfMissing('agents', 'vetting_json', `TEXT NOT NULL DEFAULT '{}'`);
+  addColumnIfMissing('agents', 'reviewed', 'INTEGER NOT NULL DEFAULT 0');
+}
+if (userVersion < 14) {
+  migrateToV14();
+  db.exec('PRAGMA user_version = 14');
 }
 
 // ---------- defaults ----------
@@ -1128,6 +1143,9 @@ export function getVisibleProfile(id, viewerId) {
 /** Agent wire object (camelCase). Agents are AI participants registered by a human operator. */
 function toAgent(row) {
   if (!row) return null;
+  const vetting = parseJson(row.vetting_json, {});
+  const vettingComplete = AGENT_VETTING_KEYS.every((k) => vetting[k] === true);
+  const reviewed = row.reviewed === 1;
   return {
     id: row.id,
     name: row.name,
@@ -1139,6 +1157,12 @@ function toAgent(row) {
     endpointUrl: row.endpoint_url || '',
     trustNote: row.trust_note || '',
     verified: row.verified === 1,
+    vetting,
+    vettingComplete,
+    reviewed,
+    // Honest display tier. "Verified" is never used: only a host review
+    // marks "Host-reviewed", and even that is not a platform guarantee.
+    trustTier: reviewed ? 'host-reviewed' : (vettingComplete ? 'operator-attested' : 'unverified'),
     isHidden: row.is_hidden === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -1162,12 +1186,12 @@ export function listAgents({ includeHidden = false } = {}) {
   return rows.map(toAgent);
 }
 
-export function createAgent({ name, operatorProfileId, description = '', capabilities = [], endpointUrl = '', trustNote = '' }) {
+export function createAgent({ name, operatorProfileId, description = '', capabilities = [], endpointUrl = '', trustNote = '', vetting = {} }) {
   const now = new Date().toISOString();
   const result = db.prepare(`
     INSERT INTO agents
-      (name, kind, operator_profile_id, description, capabilities_json, endpoint_url, trust_note, verified, is_hidden, created_at, updated_at)
-    VALUES (?, 'ai', ?, ?, ?, ?, ?, 0, 0, ?, ?)
+      (name, kind, operator_profile_id, description, capabilities_json, endpoint_url, trust_note, vetting_json, verified, is_hidden, created_at, updated_at)
+    VALUES (?, 'ai', ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)
   `).run(
     String(name).trim(),
     Number(operatorProfileId) || null,
@@ -1175,10 +1199,25 @@ export function createAgent({ name, operatorProfileId, description = '', capabil
     JSON.stringify(normalizeStringList(capabilities)),
     String(endpointUrl || '').trim(),
     String(trustNote || '').trim(),
+    JSON.stringify(normalizeVetting(vetting)),
     now,
     now,
   );
   return getAgent(Number(result.lastInsertRowid));
+}
+
+/** Normalize a vetting payload to the known checklist keys (booleans). */
+export function normalizeVetting(vetting) {
+  const out = {};
+  for (const k of AGENT_VETTING_KEYS) out[k] = (vetting && vetting[k]) === true;
+  return out;
+}
+
+/** Host-only: mark an agent listing as host-reviewed (or clear it). */
+export function setAgentReviewed(id, reviewed) {
+  db.prepare('UPDATE agents SET reviewed = ?, updated_at = ? WHERE id = ?')
+    .run(reviewed ? 1 : 0, new Date().toISOString(), id);
+  return getAgent(id);
 }
 
 /**
@@ -1197,6 +1236,7 @@ export function updateAgent(id, fields, operatorProfileId) {
   if (fields.capabilities !== undefined) { sets.push('capabilities_json = ?'); params.push(JSON.stringify(normalizeStringList(fields.capabilities))); }
   if (fields.endpointUrl !== undefined) { sets.push('endpoint_url = ?'); params.push(str(fields.endpointUrl)); }
   if (fields.trustNote !== undefined) { sets.push('trust_note = ?'); params.push(str(fields.trustNote)); }
+  if (fields.vetting !== undefined) { sets.push('vetting_json = ?'); params.push(JSON.stringify(normalizeVetting(fields.vetting))); }
   sets.push('updated_at = ?');
   params.push(new Date().toISOString());
   db.prepare(`UPDATE agents SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);

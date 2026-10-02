@@ -1,4 +1,4 @@
-// SEREN guided home — the AI superconnector entry point.
+// SEREN guided home — the rule-based connection guide entry point.
 // Authenticated users land here on a guided chat conversation: they tell
 // SEREN what would feel meaningful, answer follow-ups in the chat, review a
 // brief, and receive thoughtful, consent-first introduction proposals.
@@ -32,6 +32,7 @@ export async function renderHome(root, ctx) {
 
   await renderChat(body);
 
+  body.appendChild(el(`<p class="guide-secondary" style="margin-top:1.25rem">A rule-based guide, not an AI model: it matches on the words you share, and every introduction still needs a yes from both people.</p>`));
   body.appendChild(secondaryLinks());
   announce('A guided conversation with SEREN.');
 

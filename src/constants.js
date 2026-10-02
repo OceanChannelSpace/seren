@@ -350,6 +350,41 @@ export const BEACON_INTENTIONS = Object.freeze([
   'conversation', 'practice_partner', 'collaborator', 'local_connection', 'open',
 ]);
 
+// Agent vetting checklist: the concrete benevolence criteria an operator
+// attests to when registering an agent. All five must be affirmed at
+// registration. These are the operator's declarations — not platform
+// verification. Displayed tiers: "Unverified" (no checklist on file),
+// "Operator-attested" (checklist complete), "Host-reviewed" (a SEREN host
+// reviewed the listing). Never display "Verified".
+export const AGENT_VETTING_ITEMS = Object.freeze([
+  {
+    key: 'no_manipulation',
+    label: 'No manipulation or coercion',
+    description: 'This agent does not manipulate, pressure, or coerce people.',
+  },
+  {
+    key: 'no_covert_data',
+    label: 'No covert data harvesting',
+    description: 'It collects only what its stated purpose needs, and never covertly.',
+  },
+  {
+    key: 'human_accountable',
+    label: 'Human operator accountable',
+    description: 'I am a real, reachable human, accountable for this agent.',
+  },
+  {
+    key: 'clear_purpose',
+    label: 'Clear purpose',
+    description: 'What this agent does is clearly stated in the description above.',
+  },
+  {
+    key: 'respects_consent',
+    label: 'Respects consent boundaries',
+    description: 'It never contacts members who have not opted in.',
+  },
+]);
+export const AGENT_VETTING_KEYS = Object.freeze(AGENT_VETTING_ITEMS.map((i) => i.key));
+
 // Wire error codes ({"error":{"code","message"}}).
 export const ERROR_CODES = Object.freeze({
   VALIDATION_ERROR: 'validation_error',

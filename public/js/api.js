@@ -94,6 +94,8 @@ export const registerAgent = (payload) => request('POST', '/api/agents', payload
 export const updateAgent = (id, payload) => request('PATCH', `/api/agents/${id}`, payload);
 export const hideAgent = (id, _operatorProfileId) =>
   request('POST', `/api/agents/${id}/hide`, {});
+export const reviewAgent = (id) =>
+  request('POST', `/api/agents/${id}/review`, {});
 
 // --- legacy single-shot introduction request ---
 export const requestIntroduction = (_requesterId, intention) =>

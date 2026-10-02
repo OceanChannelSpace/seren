@@ -11,7 +11,7 @@ import {
   PRACTICE_VALUES, INTENTION_VALUES,
   CONNECTION_TYPE_VALUES, CONNECTION_FORMATS, COMMITMENT_LEVELS, TONES,
   CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, RESPONSE_KINDS, REPORT_REASONS,
-  BEACON_SOURCES, BEACON_INTENTIONS,
+  BEACON_SOURCES, BEACON_INTENTIONS, AGENT_VETTING_KEYS,
 } from './constants.js';
 import { getSyncCard } from './sync-deck.js';
 
@@ -372,6 +372,23 @@ export function validateAgentInput(body, { isUpdate = false } = {}) {
           push(errors, 'endpointUrl', 'endpointUrl must be a valid http(s) URL');
         } else if (isNonPublicHostname(parsed.hostname)) {
           push(errors, 'endpointUrl', 'endpointUrl must point to a public host (no localhost, private, or internal addresses)');
+        }
+      }
+    }
+  }
+  // Benevolence checklist: at registration every item must be affirmed. On
+  // update the operator may complete it later; any provided keys must be
+  // booleans.
+  if (body.vetting !== undefined || required) {
+    if (!isPlainObject(body.vetting)) {
+      push(errors, 'vetting', 'vetting must be completed: affirm each benevolence item');
+    } else {
+      for (const k of AGENT_VETTING_KEYS) {
+        const v = body.vetting[k];
+        if (required && v !== true) {
+          push(errors, `vetting.${k}`, 'this benevolence item must be affirmed to register an agent');
+        } else if (v !== undefined && typeof v !== 'boolean') {
+          push(errors, `vetting.${k}`, 'vetting items must be true or false');
         }
       }
     }

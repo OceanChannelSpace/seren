@@ -213,7 +213,7 @@ Documented in `.env.example`. No secrets exist.
 
 ## Addendum — v3: consent-first connection briefs (2026-09-29)
 
-The guided superconnector flow sits on top of the above. Guide session
+The guided connection flow sits on top of the above. It is a rule-based guide (deterministic keyword and pattern matching), not an AI model. Guide session
 endpoints keep their shapes; the completion response now returns
 `proposals: []` until the requester has an active, consent-saved brief
 (consent-first: proposals are unlocked by `GET /api/guide/proposals` after

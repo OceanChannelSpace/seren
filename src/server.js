@@ -11,6 +11,7 @@ import {
   PRACTICES, PRACTICE_VALUES, INTENTIONS, CONNECTION_TYPES, CONNECTION_FORMATS, FORMAT_LABELS,
   COMMITMENT_LEVELS, COMMITMENT_LABELS, TONES, TONE_LABELS,
   CIRCLE_KINDS, CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, REQUEST_TEMPLATES, EXPLORE_TOPICS,
+  AGENT_VETTING_ITEMS,
 } from './constants.js';
 import {
   validateProfileInput, validateIntroRequest, validateConnectionRequest,
@@ -121,6 +122,7 @@ import {
   createAgent,
   updateAgent,
   hideAgent,
+  setAgentReviewed,
 } from './db.js';
 
 export const app = express();
@@ -374,6 +376,7 @@ app.get('/api/meta', (req, res) => {
     exploreTopics: EXPLORE_TOPICS,
     responseKinds: RESPONSE_KINDS,
     supportNote: BRAND.supportNote,
+    agentVetting: AGENT_VETTING_ITEMS,
   });
 });
 
@@ -598,6 +601,18 @@ app.post('/api/agents/:id/hide', (req, res) => {
   if (result === false) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
   if (result === 'forbidden') return err(res, 403, ERROR_CODES.FORBIDDEN, 'Only the registering operator can hide this agent.');
   res.json({ ok: true });
+});
+
+// Host-only: mark an agent listing as host-reviewed. This records that a
+// human host looked at the listing — it is not a platform guarantee of the
+// agent's behavior. Display tier becomes "Host-reviewed".
+app.post('/api/agents/:id/review', (req, res) => {
+  if (!requireHost(req, res)) return;
+  const id = parseId(req.params.id);
+  if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  const agent = setAgentReviewed(id, true);
+  if (!agent || agent.isHidden) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  res.json(agent);
 });
 
 app.post('/api/discover/pass', (req, res) => {
@@ -1522,7 +1537,7 @@ app.post('/api/sync/sweep', (req, res) => {
   res.json({ swept: expireStaleBeacons(null) });
 });
 
-// ---------- guide (AI-superconnector flow) ----------
+// ---------- guide (rule-based connection guide) ----------
 
 function guideSessionView(session, profile) {
   const parsed = { ...session.parsed, requestText: session.requestText };

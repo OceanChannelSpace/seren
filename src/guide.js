@@ -1,4 +1,6 @@
-// SEREN guide engine — the "spiritual superconnector" brain.
+// SEREN guide engine — the rule-based connection guide.
+// Honest labeling: this is deterministic keyword/regex logic, not an LLM
+// or external AI. It matches on words the member provides.
 //
 // Keyword-based intent parsing, minimal follow-up selection, and curated
 // proposal building. Pure functions: no network, no LLM, no side effects.
