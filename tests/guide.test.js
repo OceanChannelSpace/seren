@@ -49,21 +49,32 @@ function profileBody(overrides = {}) {
   };
 }
 
-async function api(method, path, body) {
+// Identity: the session token arrives as an HttpOnly cookie on profile
+// creation. Pass a created profile (or its `_auth` cookie string) as `auth`
+// and its cookie is sent; the server derives identity from the token alone.
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 async function createProfile(overrides = {}) {
-  const { status, json } = await api('POST', '/api/profiles', profileBody(overrides));
+  const { status, json, setCookie } = await api('POST', '/api/profiles', profileBody(overrides));
   assert.equal(status, 201, `profile create failed: ${JSON.stringify(json)}`);
-  return json;
+  return { ...json, _auth: sessionCookie(setCookie) };
 }
 
 // ---------- parseIntent ----------
@@ -294,9 +305,9 @@ test('buildProposals: candidate without introductions consent is excluded', () =
 
 test('guide HTTP: start validates text length', async () => {
   const me = await createProfile();
-  const short = await api('POST', '/api/guide/sessions', { profileId: me.id, text: 'hi' });
+  const short = await api('POST', '/api/guide/sessions', { text: 'hi' }, me);
   assert.equal(short.status, 400);
-  const missing = await api('POST', '/api/guide/sessions', { profileId: me.id });
+  const missing = await api('POST', '/api/guide/sessions', {}, me);
   assert.equal(missing.status, 400);
 });
 
@@ -311,9 +322,8 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
   });
 
   const start = await api('POST', '/api/guide/sessions', {
-    profileId: me.id,
     text: 'I want to explore dreamwork and symbolism with someone thoughtful, over video chat.',
-  });
+  }, me);
   assert.equal(start.status, 201, JSON.stringify(start.json));
   const s0 = start.json.session;
   assert.ok(s0.id);
@@ -328,8 +338,8 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
       : q.type === 'free' ? `A few honest words about ${q.id}.`
       : q.options[0].value;
     const r = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-      profileId: me.id, questionId: q.id, value,
-    });
+      questionId: q.id, value,
+    }, me);
     assert.equal(r.status, 200, `answer ${q.id}: ${JSON.stringify(r.json)}`);
     last = r.json;
   }
@@ -339,16 +349,15 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
   assert.equal(last.proposals.length, 0, 'no proposals before brief approval');
 
   // The consent-first path: draft brief → approve → gated proposals unlock.
-  const created = await api('POST', '/api/briefs', { profileId: me.id, sessionId: s0.id });
+  const created = await api('POST', '/api/briefs', { sessionId: s0.id }, me);
   assert.ok([200, 201].includes(created.status), JSON.stringify(created.json));
   const approved = await api('POST', `/api/briefs/${created.json.brief.id}/approve`, {
-    profileId: me.id,
     shared_text: 'Seeker is hoping to find a thoughtful dreamwork peer. They offer steady listening.',
     consent_save: true,
     consent_share: true,
-  });
+  }, me);
   assert.equal(approved.status, 200);
-  const gated = await api('GET', `/api/guide/proposals?profileId=${me.id}&sessionId=${s0.id}`);
+  const gated = await api('GET', `/api/guide/proposals?sessionId=${s0.id}`, undefined, me);
   assert.equal(gated.status, 200, JSON.stringify(gated.json));
   const props = gated.json.proposals;
   assert.ok(props.length >= 1, 'expected at least one proposal after approval');
@@ -368,12 +377,12 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
 
   // Session is complete — further answers rejected.
   const again = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-    profileId: me.id, questionId: s0.questions[0].id, value: 'a few more honest words',
-  });
+    questionId: s0.questions[0].id, value: 'a few more honest words',
+  }, me);
   assert.equal(again.status, 409);
 
   // GET the session.
-  const got = await api('GET', `/api/guide/sessions/${s0.id}?profileId=${me.id}`);
+  const got = await api('GET', `/api/guide/sessions/${s0.id}`, undefined, me);
   assert.equal(got.status, 200);
   assert.equal(got.json.session.status, 'complete');
 });
@@ -381,15 +390,15 @@ test('guide HTTP: full session flow start → answer all → proposals', async (
 test('guide HTTP: skip is allowed and still completes', async () => {
   const me = await createProfile({ name: 'Skipper' });
   const start = await api('POST', '/api/guide/sessions', {
-    profileId: me.id, text: 'I am curious and open, but not sure exactly what I need right now.',
-  });
+    text: 'I am curious and open, but not sure exactly what I need right now.',
+  }, me);
   assert.equal(start.status, 201);
   const s0 = start.json.session;
   let last = null;
   for (const q of s0.questions) {
     const r = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-      profileId: me.id, questionId: q.id, value: null,
-    });
+      questionId: q.id, value: null,
+    }, me);
     assert.equal(r.status, 200, `skip ${q.id}: ${JSON.stringify(r.json)}`);
     last = r.json;
   }
@@ -400,30 +409,30 @@ test('guide HTTP: skip is allowed and still completes', async () => {
 test('guide HTTP: bad questionId rejected', async () => {
   const me = await createProfile({ name: 'BadQ' });
   const start = await api('POST', '/api/guide/sessions', {
-    profileId: me.id, text: 'I want a meditation partner for weekly practice and reflection.',
-  });
+    text: 'I want a meditation partner for weekly practice and reflection.',
+  }, me);
   assert.equal(start.status, 201);
   const bad = await api('POST', `/api/guide/sessions/${start.json.session.id}/answer`, {
-    profileId: me.id, questionId: 'telepathy', value: 'x',
-  });
+    questionId: 'telepathy', value: 'x',
+  }, me);
   assert.ok([400].includes(bad.status), `got ${bad.status}`);
 });
 
 test('guide HTTP: free-text answers cap at 500 chars', async () => {
   const me = await createProfile({ name: 'BadV' });
   const start = await api('POST', '/api/guide/sessions', {
-    profileId: me.id, text: 'I want a meditation partner for weekly practice and reflection.',
-  });
+    text: 'I want a meditation partner for weekly practice and reflection.',
+  }, me);
   const s0 = start.json.session;
   const free = s0.questions.find((x) => x.type === 'free');
   assert.ok(free, 'a free-text question should be open');
   const tooLong = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-    profileId: me.id, questionId: free.id, value: 'x'.repeat(501),
-  });
+    questionId: free.id, value: 'x'.repeat(501),
+  }, me);
   assert.equal(tooLong.status, 400);
   const ok = await api('POST', `/api/guide/sessions/${s0.id}/answer`, {
-    profileId: me.id, questionId: free.id, value: 'a few honest words',
-  });
+    questionId: free.id, value: 'a few honest words',
+  }, me);
   assert.equal(ok.status, 200);
 });
 
@@ -431,20 +440,20 @@ test('guide HTTP: wrong profileId is forbidden', async () => {
   const me = await createProfile({ name: 'Owner' });
   const other = await createProfile({ name: 'Stranger' });
   const start = await api('POST', '/api/guide/sessions', {
-    profileId: me.id, text: 'I want a meditation partner for weekly practice and reflection.',
-  });
+    text: 'I want a meditation partner for weekly practice and reflection.',
+  }, me);
   const sid = start.json.session.id;
-  const get = await api('GET', `/api/guide/sessions/${sid}?profileId=${other.id}`);
+  const get = await api('GET', `/api/guide/sessions/${sid}`, undefined, other);
   assert.equal(get.status, 403);
   const ans = await api('POST', `/api/guide/sessions/${sid}/answer`, {
-    profileId: other.id, questionId: 'format', value: 'video',
-  });
+    questionId: 'format', value: 'video',
+  }, other);
   assert.equal(ans.status, 403);
 });
 
 test('guide HTTP: unknown session is 404', async () => {
   const me = await createProfile({ name: 'Lost' });
-  const r = await api('GET', '/api/guide/sessions/999999?profileId=' + me.id);
+  const r = await api('GET', '/api/guide/sessions/999999', undefined, me);
   assert.equal(r.status, 404);
 });
 
@@ -452,13 +461,13 @@ test('guide HTTP: unknown session is 404', async () => {
 
 test('profile PATCH: values validated and persisted', async () => {
   const me = await createProfile({ name: 'Valued' });
-  const bad = await api('PATCH', `/api/profiles/${me.id}`, { values: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] });
+  const bad = await api('PATCH', `/api/profiles/${me.id}`, { values: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, me);
   assert.equal(bad.status, 400, 'more than 6 values rejected');
-  const bad2 = await api('PATCH', `/api/profiles/${me.id}`, { values: 'grounded' });
+  const bad2 = await api('PATCH', `/api/profiles/${me.id}`, { values: 'grounded' }, me);
   assert.equal(bad2.status, 400, 'non-array rejected');
-  const good = await api('PATCH', `/api/profiles/${me.id}`, { values: ['grounded', 'curious'] });
+  const good = await api('PATCH', `/api/profiles/${me.id}`, { values: ['grounded', 'curious'] }, me);
   assert.equal(good.status, 200, JSON.stringify(good.json));
-  const got = await api('GET', `/api/profiles/${me.id}?viewerId=${me.id}`);
+  const got = await api('GET', `/api/profiles/${me.id}`, undefined, me);
   assert.deepEqual(got.json.values, ['grounded', 'curious']);
 });
 

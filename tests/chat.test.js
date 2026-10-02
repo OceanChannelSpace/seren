@@ -49,21 +49,32 @@ function profileBody(overrides = {}) {
   };
 }
 
-async function api(method, path, body) {
+// Identity: the session token arrives as an HttpOnly cookie on profile
+// creation. Pass a created profile (or its `_auth` cookie string) as `auth`
+// and its cookie is sent; the server derives identity from the token alone.
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 async function createProfile(overrides = {}) {
-  const { status, json } = await api('POST', '/api/profiles', profileBody(overrides));
+  const { status, json, setCookie } = await api('POST', '/api/profiles', profileBody(overrides));
   assert.equal(status, 201, `fixture profile creation should succeed: ${JSON.stringify(json)}`);
-  return json;
+  return { ...json, _auth: sessionCookie(setCookie) };
 }
 
 /** Readable text of a chat message regardless of the exact text field name. */
@@ -107,17 +118,17 @@ async function seedCandidate(name) {
   return p;
 }
 
-async function startChat(profileId) {
-  const { status, json } = await api('POST', '/api/chat/start', { profileId });
+async function startChat(profile) {
+  const { status, json } = await api('POST', '/api/chat/start', {}, profile);
   // Contract said 200; the implementation creates a session resource and returns 201.
   assert.ok([200, 201].includes(status), `chat start failed: ${JSON.stringify(json)}`);
   return json;
 }
 
-async function sendChat(profileId, sessionId, text) {
-  const body = { profileId, sessionId };
+async function sendChat(profile, sessionId, text) {
+  const body = { sessionId };
   if (text !== undefined) body.text = text;
-  return api('POST', '/api/chat/message', body);
+  return api('POST', '/api/chat/message', body, profile);
 }
 
 /**
@@ -126,9 +137,9 @@ async function sendChat(profileId, sessionId, text) {
  * verbatim) until the session reaches brief_review. Returns the last response.
  */
 async function driveToBriefReview(
-  profileId, sessionId, firstText = 'I want a meditation practice partner to sit with weekly',
+  profile, sessionId, firstText = 'I want a meditation practice partner to sit with weekly',
 ) {
-  let r = await sendChat(profileId, sessionId, firstText);
+  let r = await sendChat(profile, sessionId, firstText);
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.equal(r.json.session.stage, 'followup', `expected followup, got: ${JSON.stringify(r.json.session)}`);
   for (let i = 0; i < 12; i++) {
@@ -151,7 +162,7 @@ async function driveToBriefReview(
       );
       answer = q.options[0].label;
     }
-    r = await sendChat(profileId, sessionId, answer);
+    r = await sendChat(profile, sessionId, answer);
     assert.equal(r.status, 200, JSON.stringify(r.json));
   }
   assert.fail('chat session never reached brief_review after 12 answers');
@@ -170,7 +181,7 @@ function briefPayloadOf(json) {
 
 test('chat start: no brief → seeking, greeting uses the first name, quickReplies present', async () => {
   const me = await createProfile({ name: 'Ava Alvarez' });
-  const json = await startChat(me.id);
+  const json = await startChat(me);
   assert.equal(json.session.stage, 'seeking');
   assert.ok(json.session.id, 'session should have an id');
   assert.ok(Array.isArray(json.messages) && json.messages.length > 0, 'messages should be non-empty');
@@ -189,7 +200,7 @@ test('chat start: active brief → proposals stage with a proposals array', asyn
   await seedCandidate('Candace One');
   await seedCandidate('Candace Two');
   insertBrief(me.id, { status: 'active', consent: true });
-  const json = await startChat(me.id);
+  const json = await startChat(me);
   assert.equal(json.session.stage, 'proposals');
   assert.ok(Array.isArray(json.proposals), 'proposals array should be present');
 });
@@ -197,7 +208,7 @@ test('chat start: active brief → proposals stage with a proposals array', asyn
 test('chat start: draft brief → resume_offer', async () => {
   const me = await createProfile({ name: 'Dana Drafter' });
   insertBrief(me.id, { status: 'draft' });
-  const json = await startChat(me.id);
+  const json = await startChat(me);
   assert.equal(json.session.stage, 'resume_offer');
 });
 
@@ -205,9 +216,9 @@ test('chat start: draft brief → resume_offer', async () => {
 
 test('chat message: short text in seeking keeps the stage with a re-prompt', async () => {
   const me = await createProfile({ name: 'Sam Seeker' });
-  const { session } = await startChat(me.id);
+  const { session } = await startChat(me);
   assert.equal(session.stage, 'seeking');
-  const { status, json } = await sendChat(me.id, session.id, 'hi');
+  const { status, json } = await sendChat(me, session.id, 'hi');
   assert.equal(status, 200, JSON.stringify(json));
   assert.equal(json.session.stage, 'seeking', 'short text should keep the session seeking');
   assert.ok(json.messages.length > 0, 'a re-prompt message should be present');
@@ -215,8 +226,8 @@ test('chat message: short text in seeking keeps the stage with a re-prompt', asy
 
 test('chat message: longer text → followup with a kind:question message', async () => {
   const me = await createProfile({ name: 'Fiona Followup' });
-  const { session } = await startChat(me.id);
-  const { status, json } = await sendChat(me.id, session.id, 'I want a meditation practice partner to sit with weekly');
+  const { session } = await startChat(me);
+  const { status, json } = await sendChat(me, session.id, 'I want a meditation practice partner to sit with weekly');
   assert.equal(status, 200, JSON.stringify(json));
   assert.equal(json.session.stage, 'followup');
   assert.ok(
@@ -229,8 +240,8 @@ test('chat message: longer text → followup with a kind:question message', asyn
 
 test('chat flow: followup loop → brief_review; brief payload has no private_notes', async () => {
   const me = await createProfile({ name: 'Brenda Reviewer' });
-  const { session } = await startChat(me.id);
-  const r = await driveToBriefReview(me.id, session.id);
+  const { session } = await startChat(me);
+  const r = await driveToBriefReview(me, session.id);
   assert.equal(r.json.session.stage, 'brief_review');
   const brief = briefPayloadOf(r.json);
   assert.ok(!('private_notes' in brief), 'private_notes must not leak in the chat brief payload');
@@ -243,10 +254,10 @@ test('chat flow: confirm in brief_review → proposals; brief goes active; propo
   const me = await createProfile({ name: 'Pam Proposer' });
   const candA = await seedCandidate('Candace Alpha');
   const candB = await seedCandidate('Candace Beta');
-  const { session } = await startChat(me.id);
-  await driveToBriefReview(me.id, session.id);
+  const { session } = await startChat(me);
+  await driveToBriefReview(me, session.id);
 
-  const { status, json } = await sendChat(me.id, session.id, 'Looks good — find matches');
+  const { status, json } = await sendChat(me, session.id, 'Looks good — find matches');
   assert.equal(status, 200, JSON.stringify(json));
   assert.equal(json.session.stage, 'proposals');
   assert.ok(Array.isArray(json.proposals), 'proposals should be an array');
@@ -255,7 +266,7 @@ test('chat flow: confirm in brief_review → proposals; brief goes active; propo
     'proposals must not contain numeric scores anywhere',
   );
 
-  const mine = await api('GET', `/api/briefs/mine?profileId=${me.id}`);
+  const mine = await api('GET', '/api/briefs/mine', undefined, me);
   assert.equal(mine.status, 200, JSON.stringify(mine.json));
   assert.equal(mine.json.brief.status, 'active', 'confirming the brief should activate it');
 
@@ -293,18 +304,18 @@ test('chat flow: confirm in brief_review → proposals; brief goes active; propo
 
 test('chat flow: edit intention in brief_review → editing → brief_review; intention updated', async () => {
   const me = await createProfile({ name: 'Eddie Editor' });
-  const { session } = await startChat(me.id);
-  await driveToBriefReview(me.id, session.id);
+  const { session } = await startChat(me);
+  await driveToBriefReview(me, session.id);
 
-  const edit = await sendChat(me.id, session.id, 'Edit my intention');
+  const edit = await sendChat(me, session.id, 'Edit my intention');
   assert.equal(edit.status, 200, JSON.stringify(edit.json));
   assert.equal(edit.json.session.stage, 'editing');
 
-  const revised = await sendChat(me.id, session.id, 'New intention text here');
+  const revised = await sendChat(me, session.id, 'New intention text here');
   assert.equal(revised.status, 200, JSON.stringify(revised.json));
   assert.equal(revised.json.session.stage, 'brief_review');
 
-  const mine = await api('GET', `/api/briefs/mine?profileId=${me.id}`);
+  const mine = await api('GET', '/api/briefs/mine', undefined, me);
   assert.equal(mine.status, 200, JSON.stringify(mine.json));
   assert.ok(
     String(mine.json.brief.intention_text).includes('New intention text here'),
@@ -317,15 +328,15 @@ test('chat flow: edit intention in brief_review → editing → brief_review; in
 test('chat message: cross-profile post → 403, unknown session → 404, missing text → 400', async () => {
   const a = await createProfile({ name: 'Alice Owner' });
   const b = await createProfile({ name: 'Bob Intruder' });
-  const { session } = await startChat(a.id);
+  const { session } = await startChat(a);
 
-  const cross = await sendChat(b.id, session.id, 'hello there, this is not my session');
+  const cross = await sendChat(b, session.id, 'hello there, this is not my session');
   assert.equal(cross.status, 403);
 
-  const unknown = await sendChat(a.id, 999999, 'hello there, unknown session');
+  const unknown = await sendChat(a, 999999, 'hello there, unknown session');
   assert.equal(unknown.status, 404);
 
-  const missing = await sendChat(a.id, session.id, undefined);
+  const missing = await sendChat(a, session.id, undefined);
   assert.equal(missing.status, 400);
 });
 
@@ -334,10 +345,10 @@ test('chat message: cross-profile post → 403, unknown session → 404, missing
 test('chat session fetch: transcript contains both roles; wrong profile → 403', async () => {
   const me = await createProfile({ name: 'Tara Transcript' });
   const other = await createProfile({ name: 'Wendy Wrong' });
-  const { session } = await startChat(me.id);
-  await sendChat(me.id, session.id, 'I want a meditation practice partner to sit with weekly');
+  const { session } = await startChat(me);
+  await sendChat(me, session.id, 'I want a meditation practice partner to sit with weekly');
 
-  const { status, json } = await api('GET', `/api/chat/session/${session.id}?profileId=${me.id}`);
+  const { status, json } = await api('GET', `/api/chat/session/${session.id}`, undefined, me);
   assert.equal(status, 200, JSON.stringify(json));
   assert.equal(json.session.id, session.id);
   assert.ok(Array.isArray(json.transcript) && json.transcript.length > 0, 'transcript should be non-empty');
@@ -348,19 +359,25 @@ test('chat session fetch: transcript contains both roles; wrong profile → 403'
     'transcript should include the text the user sent',
   );
 
-  const wrong = await api('GET', `/api/chat/session/${session.id}?profileId=${other.id}`);
+  const wrong = await api('GET', `/api/chat/session/${session.id}`, undefined, other);
   assert.equal(wrong.status, 403);
 });
 
 // ---------- POST /api/auth/relink ----------
 
-test('auth relink: exact email+name → {profileId, name} with no email key', async () => {
+test('auth relink: exact email+name → {profileId, name} with no email key, and a fresh session cookie', async () => {
   const me = await createProfile({ name: 'Relink Rita' });
-  const { status, json } = await api('POST', '/api/auth/relink', { email: me.email, name: 'Relink Rita' });
+  const { status, json, setCookie } = await api('POST', '/api/auth/relink', { email: me.email, name: 'Relink Rita' });
   assert.equal(status, 200, JSON.stringify(json));
   assert.equal(json.profileId, me.id);
   assert.equal(json.name, 'Relink Rita');
   assert.ok(!('email' in json), 'relink response must not include the email');
+  // The relinked session is authenticated: the rotated token cookie works.
+  const cookie = sessionCookie(setCookie);
+  assert.ok(cookie, 'relink should set a seren_profile cookie');
+  const check = await api('GET', `/api/profiles/${me.id}`, undefined, cookie);
+  assert.equal(check.status, 200);
+  assert.equal(check.json.email, me.email, 'relinked cookie authenticates as the owner');
 });
 
 test('auth relink: wrong name → 404, unknown email → 404, missing name → 400', async () => {

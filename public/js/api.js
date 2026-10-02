@@ -2,8 +2,12 @@
 // Every helper resolves to the parsed JSON payload and throws ApiError
 // (with .status and .code) on non-2xx responses. The caller is responsible
 // for surfacing loading/disabled/error states; ui.js provides helpers.
-
-import { get } from './state.js';
+//
+// Identity: the member's session token lives in the HttpOnly `seren_profile`
+// cookie (set on profile creation / relink) and is sent automatically by the
+// browser. These helpers NEVER send profileId as identity — it appears only
+// as a *target* id (e.g. "view profile 7"). Extra leading profileId params
+// are accepted for call-site compatibility but ignored.
 
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -39,10 +43,6 @@ const q = (params) => {
   return str ? `?${str}` : '';
 };
 
-function profileQuery(profileId, extra) {
-  return q({ profileId: profileId ?? get('profileId'), ...(extra || {}) });
-}
-
 // --- beta / meta ---
 export const betaStatus = () => request('GET', '/api/beta/status');
 export const betaEnter = (code) => request('POST', '/api/beta/enter', { code });
@@ -52,120 +52,118 @@ export const health = () => request('GET', '/api/health');
 // --- profiles ---
 export const createProfile = (payload) => request('POST', '/api/profiles', payload);
 export const listProfiles = () => request('GET', '/api/profiles');
-/** viewerId defaults to our own profile → owner view when viewing self. */
-export const getProfile = (id, viewerId) =>
-  request('GET', `/api/profiles/${id}${q({ viewerId: viewerId ?? get('profileId') })}`);
+/** The viewer is derived server-side from the session cookie. */
+export const getProfile = (id) =>
+  request('GET', `/api/profiles/${id}`);
 export const updateProfile = (id, patch) => request('PATCH', `/api/profiles/${id}`, patch);
 
 // --- discover ---
-export const discover = (profileId, opts = {}) =>
-  request('GET', `/api/discover${profileQuery(profileId, opts)}`);
-export const passProfile = (profileId, targetId) =>
-  request('POST', '/api/discover/pass', { profileId: profileId ?? get('profileId'), targetId });
-export const saveItem = (profileId, kind, refId) =>
-  request('POST', '/api/discover/save', { profileId: profileId ?? get('profileId'), kind, refId });
-export const unsaveItem = (profileId, kind, refId) =>
-  request('DELETE', `/api/discover/save${profileQuery(profileId, { kind, refId })}`);
-export const listSaved = (profileId) =>
-  request('GET', `/api/saved${profileQuery(profileId)}`);
+export const discover = (_profileId, opts = {}) =>
+  request('GET', `/api/discover${q(opts)}`);
+export const passProfile = (_profileId, targetId) =>
+  request('POST', '/api/discover/pass', { targetId });
+export const saveItem = (_profileId, kind, refId) =>
+  request('POST', '/api/discover/save', { kind, refId });
+export const unsaveItem = (_profileId, kind, refId) =>
+  request('DELETE', `/api/discover/save${q({ kind, refId })}`);
+export const listSaved = (_profileId) =>
+  request('GET', '/api/saved');
 
 // --- agent registry ---
 export const listAgents = () => request('GET', '/api/agents');
 export const getAgent = (id) => request('GET', `/api/agents/${id}`);
 export const registerAgent = (payload) => request('POST', '/api/agents', payload);
 export const updateAgent = (id, payload) => request('PATCH', `/api/agents/${id}`, payload);
-export const hideAgent = (id, operatorProfileId) =>
-  request('POST', `/api/agents/${id}/hide`, { operatorProfileId });
+export const hideAgent = (id, _operatorProfileId) =>
+  request('POST', `/api/agents/${id}/hide`, {});
 
 // --- legacy single-shot introduction request ---
-export const requestIntroduction = (requesterId, intention) =>
-  request('POST', '/api/introductions/request', { requesterId: requesterId ?? get('profileId'), intention });
+export const requestIntroduction = (_requesterId, intention) =>
+  request('POST', '/api/introductions/request', { intention });
 
 // --- intentional connection requests (staged consent) ---
 export const requestConnection = (payload) =>
-  request('POST', '/api/connections/request', { profileId: get('profileId'), ...payload });
-export const listIntroductions = (profileId) =>
-  request('GET', `/api/introductions${profileQuery(profileId)}`);
-export const respondToIntroduction = (id, profileId, response, note) =>
-  request('POST', `/api/introductions/${id}/respond`, { profileId: profileId ?? get('profileId'), response, note });
-export const endIntroduction = (id, profileId) =>
-  request('POST', `/api/introductions/${id}/end`, { profileId: profileId ?? get('profileId') });
+  request('POST', '/api/connections/request', payload);
+export const listIntroductions = (_profileId) =>
+  request('GET', '/api/introductions');
+export const respondToIntroduction = (id, _profileId, response, note) =>
+  request('POST', `/api/introductions/${id}/respond`, { response, note });
+export const endIntroduction = (id, _profileId) =>
+  request('POST', `/api/introductions/${id}/end`);
 export const acceptIntroduction = (id) => request('POST', `/api/introductions/${id}/accept`);
 export const declineIntroduction = (id) => request('POST', `/api/introductions/${id}/decline`);
 export const withdrawIntroduction = (id) => request('POST', `/api/introductions/${id}/withdraw`);
 
 // --- messages + plans ---
-export const listMessages = (id, profileId) =>
-  request('GET', `/api/introductions/${id}/messages${profileQuery(profileId)}`);
+export const listMessages = (id, _profileId) =>
+  request('GET', `/api/introductions/${id}/messages`);
 export const sendMessage = (id, profileId, body) =>
-  request('POST', `/api/introductions/${id}/messages`, { profileId: profileId ?? get('profileId'), senderId: profileId ?? get('profileId'), body });
-export const getPlan = (id, profileId) =>
-  request('GET', `/api/introductions/${id}/plan${profileQuery(profileId)}`);
-export const savePlan = (id, profileId, plan) =>
-  request('POST', `/api/introductions/${id}/plan`, { profileId: profileId ?? get('profileId'), ...plan });
+  request('POST', `/api/introductions/${id}/messages`, { senderId: profileId, body });
+export const getPlan = (id, _profileId) =>
+  request('GET', `/api/introductions/${id}/plan`);
+export const savePlan = (id, _profileId, plan) =>
+  request('POST', `/api/introductions/${id}/plan`, plan);
 
 // --- circles ---
-export const listCircles = (viewerId, kind) =>
-  request('GET', `/api/circles${q({ viewerId: viewerId ?? get('profileId'), kind })}`);
-export const listMyCircles = (profileId) =>
-  request('GET', `/api/circles/mine${profileQuery(profileId)}`);
+export const listCircles = (_viewerId, kind) =>
+  request('GET', `/api/circles${q({ kind })}`);
+export const listMyCircles = (_profileId) =>
+  request('GET', '/api/circles/mine');
 export const createCircle = (payload) =>
-  request('POST', '/api/circles', { profileId: get('profileId'), ...payload });
-export const getCircle = (id, viewerId) =>
-  request('GET', `/api/circles/${id}${q({ viewerId: viewerId ?? get('profileId') })}`);
-export const joinCircle = (id, profileId) =>
-  request('POST', `/api/circles/${id}/join`, { profileId: profileId ?? get('profileId') });
-export const requestCircleJoin = (id, profileId, message) =>
-  request('POST', `/api/circles/${id}/request`, { profileId: profileId ?? get('profileId'), message });
-export const approveCircleRequest = (requestId, profileId) =>
-  request('POST', `/api/circle-requests/${requestId}/approve`, { profileId: profileId ?? get('profileId') });
-export const declineCircleRequest = (requestId, profileId) =>
-  request('POST', `/api/circle-requests/${requestId}/decline`, { profileId: profileId ?? get('profileId') });
+  request('POST', '/api/circles', payload);
+export const getCircle = (id, _viewerId) =>
+  request('GET', `/api/circles/${id}`);
+export const joinCircle = (id, _profileId) =>
+  request('POST', `/api/circles/${id}/join`, {});
+export const requestCircleJoin = (id, _profileId, message) =>
+  request('POST', `/api/circles/${id}/request`, { message });
+export const approveCircleRequest = (requestId, _profileId) =>
+  request('POST', `/api/circle-requests/${requestId}/approve`, {});
+export const declineCircleRequest = (requestId, _profileId) =>
+  request('POST', `/api/circle-requests/${requestId}/decline`, {});
 
 // --- blocks & reports ---
-export const listBlocks = (profileId) =>
-  request('GET', `/api/blocks${profileQuery(profileId)}`);
-export const blockProfile = (profileId, blockedId) =>
-  request('POST', '/api/blocks', { profileId: profileId ?? get('profileId'), blockedId });
-export const unblockProfile = (profileId, blockedId) =>
-  request('DELETE', `/api/blocks/${blockedId}${profileQuery(profileId)}`);
+export const listBlocks = (_profileId) =>
+  request('GET', '/api/blocks');
+export const blockProfile = (_profileId, blockedId) =>
+  request('POST', '/api/blocks', { blockedId });
+export const unblockProfile = (_profileId, blockedId) =>
+  request('DELETE', `/api/blocks/${blockedId}`);
 export const reportProfile = (payload) =>
-  request('POST', '/api/reports', { reporterId: get('profileId'), ...payload });
+  request('POST', '/api/reports', payload);
 
 // --- connection briefs ---
-// NOTE: the running backend requires profileId on every brief endpoint
-// (contract text omitted it) — helpers always send it.
 export const createBriefFromSession = (sessionId) =>
-  request('POST', '/api/briefs', { profileId: get('profileId'), sessionId });
+  request('POST', '/api/briefs', { sessionId });
 export const getMyBrief = () =>
-  request('GET', `/api/briefs/mine${profileQuery()}`);
+  request('GET', '/api/briefs/mine');
 export const updateBrief = (id, patch) =>
-  request('PATCH', `/api/briefs/${id}`, { profileId: get('profileId'), ...patch });
+  request('PATCH', `/api/briefs/${id}`, patch);
 export const approveBrief = (id, { shared_text, consent_save, consent_share }) =>
-  request('POST', `/api/briefs/${id}/approve`, { profileId: get('profileId'), shared_text, consent_save, consent_share });
+  request('POST', `/api/briefs/${id}/approve`, { shared_text, consent_save, consent_share });
 export const pauseBrief = (id) =>
-  request('POST', `/api/briefs/${id}/pause`, { profileId: get('profileId') });
+  request('POST', `/api/briefs/${id}/pause`, {});
 export const resumeBrief = (id) =>
-  request('POST', `/api/briefs/${id}/resume`, { profileId: get('profileId') });
+  request('POST', `/api/briefs/${id}/resume`, {});
 export const withdrawBrief = (id) =>
-  request('POST', `/api/briefs/${id}/withdraw`, { profileId: get('profileId') });
+  request('POST', `/api/briefs/${id}/withdraw`, {});
 export const getProposals = (sessionId) =>
-  request('GET', `/api/guide/proposals${profileQuery(null, { sessionId })}`);
+  request('GET', `/api/guide/proposals${q({ sessionId })}`);
 /** Proposals for an approved brief, regenerated from the brief itself — no session needed. */
 export const getBriefProposals = (id) =>
-  request('GET', `/api/briefs/${id}/proposals${profileQuery()}`);
+  request('GET', `/api/briefs/${id}/proposals`);
 
 // --- SEREN guide chat ---
 // Contract with the chat backend (2026-09-29):
-//   POST /api/chat/start   {profileId}            → { session:{id, stage}, messages:[...], quickReplies?, proposals?, brief? }
-//   POST /api/chat/message {profileId, sessionId, text} → same shape
-//   GET  /api/chat/session/:id?profileId=         → { session:{id, stage}, transcript:[...], question?, brief?, proposals? }
-export const chatStart = (profileId) =>
-  request('POST', '/api/chat/start', { profileId: profileId ?? get('profileId') });
-export const chatMessage = (profileId, sessionId, text) =>
-  request('POST', '/api/chat/message', { profileId: profileId ?? get('profileId'), sessionId, text });
-export const chatResume = (profileId, sessionId) =>
-  request('GET', `/api/chat/session/${encodeURIComponent(sessionId)}${q({ profileId: profileId ?? get('profileId') })}`);
+//   POST /api/chat/start   {}                  → { session:{id, stage}, messages:[...], quickReplies?, proposals?, brief? }
+//   POST /api/chat/message {sessionId, text}   → same shape
+//   GET  /api/chat/session/:id                 → { session:{id, stage}, transcript:[...], question?, brief?, proposals? }
+export const chatStart = (_profileId) =>
+  request('POST', '/api/chat/start', {});
+export const chatMessage = (_profileId, sessionId, text) =>
+  request('POST', '/api/chat/message', { sessionId, text });
+export const chatResume = (_profileId, sessionId) =>
+  request('GET', `/api/chat/session/${encodeURIComponent(sessionId)}`);
 
 // --- conversational onboarding chat (profile-less sessions) ---
 // Contract:
@@ -183,6 +181,7 @@ export const onboardingChatResume = (sessionId) =>
 
 // --- device relink (returning users) ---
 // POST /api/auth/relink {email, name} → 200 {profileId, name} | 404 | 400
+// The session cookie is set by the server; profileId is for UI state only.
 export const relink = (email, name) =>
   request('POST', '/api/auth/relink', { email, name });
 

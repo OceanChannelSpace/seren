@@ -85,8 +85,8 @@ function registerForm(profileId, onRegistered) {
   submit.addEventListener('click', async () => {
     banner.clear();
     const capabilities = capsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+    // The operator is bound server-side from the session token — never sent.
     const payload = {
-      operatorProfileId: profileId,
       name: nameInput.value.trim(),
       description: descInput.value.trim(),
       capabilities,

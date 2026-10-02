@@ -355,6 +355,7 @@ export const ERROR_CODES = Object.freeze({
   INVALID_TRANSITION: 'invalid_transition',
   BETA_REQUIRED: 'beta_required',
   BETA_CODE_INVALID: 'beta_code_invalid',
+  UNAUTHORIZED: 'unauthorized',
   FORBIDDEN: 'forbidden',
   CONFLICT_STATE: 'conflict_state',
 });

@@ -345,10 +345,9 @@ export function validateAgentInput(body, { isUpdate = false } = {}) {
     return { ok: false, errors };
   }
   const required = !isUpdate;
+  // operatorProfileId is identity-bound server-side from the session token.
   if (!isUpdate) {
-    if (!Number.isInteger(body.operatorProfileId) || body.operatorProfileId <= 0) {
-      push(errors, 'operatorProfileId', 'operatorProfileId must be a positive integer');
-    }
+    checkOptionalId(errors, body, 'operatorProfileId');
   } else if (body.operatorProfileId !== undefined
     && (!Number.isInteger(body.operatorProfileId) || body.operatorProfileId <= 0)) {
     push(errors, 'operatorProfileId', 'operatorProfileId must be a positive integer');
@@ -452,11 +451,8 @@ export function validateIntroRequest(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  if (body.requesterId === undefined || body.requesterId === null) {
-    push(errors, 'requesterId', 'requesterId is required');
-  } else if (!Number.isInteger(body.requesterId) || body.requesterId <= 0) {
-    push(errors, 'requesterId', 'requesterId must be a positive integer');
-  }
+  // requesterId is identity-bound server-side from the session token.
+  checkOptionalId(errors, body, 'requesterId');
   checkIntention(errors, body.intention, true, 5, 500);
   return { ok: errors.length === 0, errors };
 }
@@ -471,6 +467,19 @@ function checkId(errors, body, field) {
 }
 
 /**
+ * Identity fields (requesterId, reporterId, operatorProfileId, profileId)
+ * are bound server-side from the session token and must never be trusted
+ * from the caller. Validators accept them when present (contract stability)
+ * but never require them.
+ */
+function checkOptionalId(errors, body, field) {
+  if (body[field] === undefined || body[field] === null || body[field] === '') return;
+  if (!Number.isInteger(body[field]) || body[field] <= 0) {
+    push(errors, field, `${field} must be a positive integer`);
+  }
+}
+
+/**
  * Targeted intentional connection request:
  * {requesterId, targetId, connectionType, message, format?, commitment?, tone?}
  */
@@ -480,11 +489,10 @@ export function validateConnectionRequest(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'requesterId');
+  // requesterId is identity-bound server-side from the session token;
+  // the self-request check lives in the handler (authed id vs targetId).
+  checkOptionalId(errors, body, 'requesterId');
   checkId(errors, body, 'targetId');
-  if (body.requesterId === body.targetId) {
-    push(errors, 'targetId', 'you cannot request a connection with yourself');
-  }
   if (body.connectionType === undefined || body.connectionType === null || body.connectionType === '') {
     push(errors, 'connectionType', 'connectionType is required');
   } else if (!CONNECTION_TYPE_VALUES.includes(body.connectionType)) {
@@ -567,7 +575,8 @@ export function validateCircleJoin(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'profileId');
+  // profileId is identity-bound server-side from the session token.
+  checkOptionalId(errors, body, 'profileId');
   if (body.message !== undefined && body.message !== null && body.message !== '') {
     checkShortText(errors, body.message, 'message', { max: 500 });
   }
@@ -593,19 +602,19 @@ export function validateGuideStart(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'profileId');
+  checkOptionalId(errors, body, 'profileId');
   checkShortText(errors, body.text, 'text', { required: true, min: 10, max: 500 });
   return { ok: errors.length === 0, errors };
 }
 
-/** Guide answer: {profileId, questionId, value?} — value null/'' = skip. */
+/** Guide answer: {questionId, value?} (+ optional legacy profileId) — value null/'' = skip. */
 export function validateGuideAnswer(body) {
   const errors = [];
   if (!isPlainObject(body)) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'profileId');
+  checkOptionalId(errors, body, 'profileId');
   if (typeof body.questionId !== 'string' || body.questionId.trim() === '') {
     push(errors, 'questionId', 'questionId is required');
   }
@@ -619,7 +628,8 @@ export function validateReportInput(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'reporterId');
+  // reporterId is identity-bound server-side from the session token.
+  checkOptionalId(errors, body, 'reporterId');
   if (!REPORT_REASONS.includes(body.reason)) {
     push(errors, 'reason', `reason must be one of: ${REPORT_REASONS.join(', ')}`);
   }
@@ -739,18 +749,18 @@ export function validateChatStart(body) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'profileId');
+  checkOptionalId(errors, body, 'profileId');
   return { ok: errors.length === 0, errors };
 }
 
-/** Chat message: {profileId, sessionId, text} — text 1..2000 chars. */
+/** Chat message: {sessionId, text} (+ optional legacy profileId) — text 1..2000 chars. */
 export function validateChatMessage(body) {
   const errors = [];
   if (!isPlainObject(body)) {
     push(errors, 'body', 'request body must be a JSON object');
     return { ok: false, errors };
   }
-  checkId(errors, body, 'profileId');
+  checkOptionalId(errors, body, 'profileId');
   checkId(errors, body, 'sessionId');
   checkShortText(errors, body.text, 'text', { required: true, min: 1, max: 2000 });
   return { ok: errors.length === 0, errors };

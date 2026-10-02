@@ -10,6 +10,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { randomBytes, createHash } from 'node:crypto';
 import { INTRO_STATUS } from './constants.js';
 
 const DB_PATH = resolve(process.env.DB_PATH || './data/seren.db');
@@ -408,6 +409,25 @@ if (userVersion < 8) {
   db.exec('PRAGMA user_version = 8');
 }
 
+// v9: per-profile session tokens (server-issued auth). The plaintext token
+// lives only in the member's HttpOnly cookie; the DB stores its SHA-256 hash.
+function migrateToV9() {
+  addColumnIfMissing('profiles', 'token_hash', 'TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_profiles_token_hash ON profiles(token_hash)');
+  // Backfill: existing rows get an unusable random hash (no NULLs, so no
+  // NULL-bypass). Owners regain access via /api/auth/relink, which rotates
+  // the token and returns it over the fresh session cookie.
+  const rows = db.prepare('SELECT id FROM profiles WHERE token_hash IS NULL').all();
+  const upd = db.prepare('UPDATE profiles SET token_hash = ? WHERE id = ?');
+  for (const r of rows) {
+    upd.run(createHash('sha256').update(randomBytes(32)).digest('hex'), r.id);
+  }
+}
+if (userVersion < 9) {
+  migrateToV9();
+  db.exec('PRAGMA user_version = 9');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -567,6 +587,31 @@ export function getProfile(id) {
 const getProfileByEmailStmt = db.prepare('SELECT * FROM profiles WHERE email = ?');
 export function getProfileByEmail(email) {
   return toProfile(getProfileByEmailStmt.get(String(email).toLowerCase()));
+}
+
+// ---------- profile session tokens ----------
+// Server-issued bearer tokens. The plaintext token is handed to the member
+// once (HttpOnly cookie on issuance); only its SHA-256 hash is stored.
+
+export function hashProfileToken(token) {
+  return createHash('sha256').update(String(token), 'utf8').digest('hex');
+}
+
+/**
+ * Issue (or rotate) a profile's session token. Stores only the hash;
+ * returns the plaintext token for the Set-Cookie response.
+ */
+export function issueProfileToken(profileId) {
+  const token = randomBytes(32).toString('hex');
+  db.prepare('UPDATE profiles SET token_hash = ? WHERE id = ?')
+    .run(hashProfileToken(token), profileId);
+  return token;
+}
+
+const getProfileByTokenHashStmt = db.prepare('SELECT * FROM profiles WHERE token_hash = ?');
+export function getProfileByTokenHash(hash) {
+  if (!hash || typeof hash !== 'string' || hash.length === 0) return null;
+  return toProfile(getProfileByTokenHashStmt.get(hash));
 }
 
 /**

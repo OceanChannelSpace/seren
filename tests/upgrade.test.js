@@ -51,21 +51,32 @@ function profileBody(overrides = {}) {
   };
 }
 
-async function api(method, path, body) {
+// Identity: the session token arrives as an HttpOnly cookie on profile
+// creation. Pass a created profile (or its `_auth` cookie string) as `auth`
+// and its cookie is sent; the server derives identity from the token alone.
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
-  try { json = await res.json(); } catch { /* non-JSON body */ }
-  return { status: res.status, json };
+  try { json = await res.json(); } catch { /* non-JSON */ }
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 async function createProfile(overrides = {}) {
-  const { status, json } = await api('POST', '/api/profiles', profileBody(overrides));
+  const { status, json, setCookie } = await api('POST', '/api/profiles', profileBody(overrides));
   assert.equal(status, 201, 'fixture profile creation should succeed');
-  return json;
+  return { ...json, _auth: sessionCookie(setCookie) };
 }
 
 // ---------- brand modularity ----------
@@ -112,12 +123,12 @@ test('offers/needs/skills can be updated and cleared', async () => {
     offers: ['new offer'],
     needs: [],
     skills: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'],
-  });
+  }, p);
   assert.equal(status, 400, 'more than 10 skills should fail validation');
   const { status: s2, json: j2 } = await api('PATCH', `/api/profiles/${p.id}`, {
     offers: ['new offer'],
     needs: [],
-  });
+  }, p);
   assert.equal(s2, 200);
   assert.deepEqual(j2.offers, ['new offer']);
   assert.deepEqual(j2.needs, []);
@@ -129,13 +140,13 @@ test('offers/needs/skills share the practices visibility rule', async () => {
   });
   const viewer = await createProfile({ name: 'Viewer' });
   // Default consentSettings: showPractices on → fields visible to others.
-  const { json: visible } = await api('GET', `/api/profiles/${owner.id}?viewerId=${viewer.id}`);
+  const { json: visible } = await api('GET', `/api/profiles/${owner.id}`, undefined, viewer);
   assert.deepEqual(visible.offers, ['secret offer']);
   assert.deepEqual(visible.needs, ['secret need']);
   assert.deepEqual(visible.skills, ['secret skill']);
   // Turn off showPractices → fields hidden from non-mutual viewers.
-  await api('PATCH', `/api/profiles/${owner.id}`, { consentSettings: { showPractices: false } });
-  const { json: hidden } = await api('GET', `/api/profiles/${owner.id}?viewerId=${viewer.id}`);
+  await api('PATCH', `/api/profiles/${owner.id}`, { consentSettings: { showPractices: false } }, owner);
+  const { json: hidden } = await api('GET', `/api/profiles/${owner.id}`, undefined, viewer);
   assert.ok(!('offers' in hidden), 'offers should be hidden when showPractices is off');
   assert.ok(!('needs' in hidden), 'needs should be hidden when showPractices is off');
 });
@@ -252,12 +263,11 @@ test('findMatches wild card respects consent gates (blocks)', () => {
 test('POST /api/agents registers an agent with operator attestation', async () => {
   const op = await createProfile({ name: 'Operator' });
   const { status, json } = await api('POST', '/api/agents', {
-    operatorProfileId: op.id,
     name: 'Oneiro',
     description: 'A dream-work companion.',
     capabilities: ['dream interpretation', 'symbol exploration'],
     trustNote: 'I built Oneiro and vouch for its gentle approach.',
-  });
+  }, op);
   assert.equal(status, 201);
   assert.equal(json.name, 'Oneiro');
   assert.equal(json.kind, 'ai');
@@ -270,36 +280,37 @@ test('POST /api/agents registers an agent with operator attestation', async () =
 test('POST /api/agents validates input', async () => {
   const op = await createProfile({ name: 'Op Two' });
   const { status: s1, json: j1 } = await api('POST', '/api/agents', {
-    operatorProfileId: op.id,
     name: 'Bad',
     endpointUrl: 'ftp://not-http',
-  });
+  }, op);
   assert.equal(s1, 400);
   assert.ok(j1.error.details.some((d) => d.field === 'endpointUrl'));
 
-  const { status: s2 } = await api('POST', '/api/agents', { name: 'No Operator' });
-  assert.equal(s2, 400, 'operatorProfileId is required');
+  // No session token → 401; the operator is always the authed caller.
+  const { status: s2, json: j2 } = await api('POST', '/api/agents', { name: 'No Operator' });
+  assert.equal(s2, 401, 'missing token → 401');
+  assert.equal(j2.error.code, 'unauthorized');
 
-  const { status: s3 } = await api('POST', '/api/agents', {
+  // A self-asserted operatorProfileId is ignored — the token decides.
+  const { status: s3, json: j3 } = await api('POST', '/api/agents', {
     operatorProfileId: 99999,
     name: 'Ghost Operator',
-  });
-  assert.equal(s3, 404, 'unknown operator profile → 404');
+  }, op);
+  assert.equal(s3, 201, 'self-asserted operatorProfileId is ignored');
+  assert.equal(j3.operatorProfileId, op.id, 'operator comes from the session token');
 });
 
 test('GET /api/agents lists visible agents; hidden agents are excluded', async () => {
   const op = await createProfile({ name: 'Op Three' });
   const { json: a1 } = await api('POST', '/api/agents', {
-    operatorProfileId: op.id, name: 'Visible Agent', capabilities: ['listening'],
-  });
+    name: 'Visible Agent', capabilities: ['listening'],
+  }, op);
   assert.equal(a1.id > 0, true);
   const { status, json } = await api('GET', '/api/agents');
   assert.equal(status, 200);
   assert.ok(json.agents.some((a) => a.name === 'Visible Agent'));
 
-  const { status: hideStatus } = await api('POST', `/api/agents/${a1.id}/hide`, {
-    operatorProfileId: op.id,
-  });
+  const { status: hideStatus } = await api('POST', `/api/agents/${a1.id}/hide`, {}, op);
   assert.equal(hideStatus, 200);
   const { json: after } = await api('GET', '/api/agents');
   assert.ok(!after.agents.some((a) => a.id === a1.id), 'hidden agent excluded from list');
@@ -311,23 +322,21 @@ test('only the registering operator can edit or hide an agent', async () => {
   const op = await createProfile({ name: 'True Operator' });
   const other = await createProfile({ name: 'Stranger' });
   const { json: agent } = await api('POST', '/api/agents', {
-    operatorProfileId: op.id, name: 'Guarded Agent', description: 'v1',
-  });
+    name: 'Guarded Agent', description: 'v1',
+  }, op);
 
   const { status: editForbidden } = await api('PATCH', `/api/agents/${agent.id}`, {
-    operatorProfileId: other.id, description: 'hijacked',
-  });
+    description: 'hijacked',
+  }, other);
   assert.equal(editForbidden, 403);
 
   const { status: editOk, json: edited } = await api('PATCH', `/api/agents/${agent.id}`, {
-    operatorProfileId: op.id, description: 'v2',
-  });
+    description: 'v2',
+  }, op);
   assert.equal(editOk, 200);
   assert.equal(edited.description, 'v2');
 
-  const { status: hideForbidden } = await api('POST', `/api/agents/${agent.id}/hide`, {
-    operatorProfileId: other.id,
-  });
+  const { status: hideForbidden } = await api('POST', `/api/agents/${agent.id}/hide`, {}, other);
   assert.equal(hideForbidden, 403);
 });
 
@@ -356,13 +365,12 @@ test('GET /api/discover?agents=true suggests matching agents alongside people', 
   });
   const op = await createProfile({ name: 'Agent Op' });
   await api('POST', '/api/agents', {
-    operatorProfileId: op.id,
     name: 'Oneiro',
     description: 'A dream-work companion.',
     capabilities: ['dream interpretation'],
-  });
+  }, op);
 
-  const { status, json } = await api('GET', `/api/discover?profileId=${seeker.id}&agents=true`);
+  const { status, json } = await api('GET', '/api/discover?agents=true', undefined, seeker);
   assert.equal(status, 200);
   assert.ok(Array.isArray(json.matches), 'human matches still returned');
   assert.ok(json.agents.some((a) => a.agent.name === 'Oneiro'),
@@ -380,13 +388,13 @@ test('agent suggestions are omitted without the flag or without ai_matching cons
   });
   const op = await createProfile({ name: 'Agent Op 2' });
   await api('POST', '/api/agents', {
-    operatorProfileId: op.id, name: 'Oneiro Two', capabilities: ['dream interpretation'],
-  });
+    name: 'Oneiro Two', capabilities: ['dream interpretation'],
+  }, op);
 
-  const { json: noFlag } = await api('GET', `/api/discover?profileId=${seeker.id}`);
+  const { json: noFlag } = await api('GET', '/api/discover', undefined, seeker);
   assert.deepEqual(noFlag.agents, [], 'no agents without the flag');
 
-  const { json: noConsent } = await api('GET', `/api/discover?profileId=${seeker.id}&agents=true`);
+  const { json: noConsent } = await api('GET', '/api/discover?agents=true', undefined, seeker);
   assert.deepEqual(noConsent.agents, [], 'no agents when ai_matching consent is off');
 });
 
@@ -405,7 +413,7 @@ test('GET /api/discover marks the wild card in its response', async () => {
   await mk('Wild C');
   await mk('Wild D');
 
-  const { status, json } = await api('GET', `/api/discover?profileId=${requester.id}&limit=2`);
+  const { status, json } = await api('GET', '/api/discover?limit=2', undefined, requester);
   assert.equal(status, 200);
   const wilds = json.matches.filter((m) => m.serendipity === true);
   assert.equal(wilds.length, 1, 'exactly one wild card appended');
@@ -425,14 +433,14 @@ test('POST /api/agents rejects non-public endpoint hosts', async () => {
     'http://mybox.local/agent',
   ]) {
     const { status, json } = await api('POST', '/api/agents', {
-      operatorProfileId: op.id, name: `E-${Math.abs(hashStr(url))}`, endpointUrl: url,
-    });
+      name: `E-${Math.abs(hashStr(url))}`, endpointUrl: url,
+    }, op);
     assert.equal(status, 400, `should reject ${url}`);
     assert.ok(json.error.details.some((d) => d.field === 'endpointUrl'), url);
   }
   const { status: ok } = await api('POST', '/api/agents', {
-    operatorProfileId: op.id, name: 'E-public', endpointUrl: 'https://agents.example.org/chat',
-  });
+    name: 'E-public', endpointUrl: 'https://agents.example.org/chat',
+  }, op);
   assert.equal(ok, 201, 'public https endpoint accepted');
 });
 
@@ -446,7 +454,7 @@ test('PATCH /api/profiles/:id accepts serendipity and needsMatching consent sett
   const p = await createProfile({ name: 'Consent Keys' });
   const { status, json } = await api('PATCH', `/api/profiles/${p.id}`, {
     consentSettings: { serendipity: false, needsMatching: false },
-  });
+  }, p);
   assert.equal(status, 200, `expected 200, got ${JSON.stringify(json)}`);
   assert.equal(json.consentSettings.serendipity, false);
   assert.equal(json.consentSettings.needsMatching, false);

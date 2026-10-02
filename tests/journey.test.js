@@ -72,15 +72,23 @@ async function stopServer(child, timeoutMs = 10000) {
   await exited;
 }
 
-async function api(base, method, path, body) {
+async function api(base, method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON body */ }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 test('full user journey persists across real server restarts', { timeout: 90000 }, async () => {
@@ -104,7 +112,7 @@ test('full user journey persists across real server restarts', { timeout: 90000 
     assert.equal(health.json.status, 'ok');
     assert.equal(health.json.seeded, true);
 
-    // (a) create a profile via the API
+    // (a) create two profiles via the API (identity = the session cookies)
     const created = await api(base, 'POST', '/api/profiles', {
       name: 'Journey Tester',
       email: 'journey@example.com',
@@ -115,18 +123,37 @@ test('full user journey persists across real server restarts', { timeout: 90000 
     });
     assert.equal(created.status, 201);
     const profileId = created.json.id;
+    const authA = sessionCookie(created.setCookie);
+    assert.ok(authA, 'profile creation should set a session cookie');
 
-    // (b) request an introduction → accept it
-    const reqIntro = await api(base, 'POST', '/api/introductions/request', {
-      requesterId: profileId,
-      intention: 'I want a breathwork buddy to practice with every Sunday morning.',
+    const createdB = await api(base, 'POST', '/api/profiles', {
+      name: 'Journey Peer',
+      email: 'journey-peer@example.com',
+      interests: ['meditation', 'breathwork'],
+      intention: 'I am looking for a breathwork buddy for Sunday morning practice.',
+      connectionPrefs: { seeking: ['practice-partner'], availability: 'Sunday mornings' },
+      consents: { introductions: true, community_visible: true, ai_matching: true },
     });
+    assert.equal(createdB.status, 201);
+    const peerId = createdB.json.id;
+    const authB = sessionCookie(createdB.setCookie);
+
+    // (b) A requests an introduction to B explicitly → B (the recipient) accepts.
+    // Role checks are token-bound: A cannot accept their own request.
+    const reqIntro = await api(base, 'POST', '/api/connections/request', {
+      targetId: peerId,
+      connectionType: 'practice-partner',
+      message: 'I would love a breathwork buddy to practice with every Sunday morning.',
+    }, authA);
     assert.equal(reqIntro.status, 201);
     const introId = reqIntro.json.introduction.id;
-    const proposedId = reqIntro.json.proposed.id;
-    assert.notEqual(proposedId, profileId, 'introduction proposes someone else');
+    assert.equal(reqIntro.json.introduction.requesterId, profileId);
+    assert.equal(reqIntro.json.introduction.proposedId, peerId);
 
-    const accepted = await api(base, 'POST', `/api/introductions/${introId}/accept`);
+    const selfAccept = await api(base, 'POST', `/api/introductions/${introId}/accept`, undefined, authA);
+    assert.equal(selfAccept.status, 403, 'requester cannot accept their own request');
+
+    const accepted = await api(base, 'POST', `/api/introductions/${introId}/accept`, undefined, authB);
     assert.equal(accepted.status, 200);
     assert.equal(accepted.json.status, 'accepted');
 
@@ -138,29 +165,30 @@ test('full user journey persists across real server restarts', { timeout: 90000 
     child = await startServer(port, dbPath);
     const base2 = `http://127.0.0.1:${port}`;
 
-    // (e) the profile and the accepted introduction persisted with correct statuses
-    const got = await api(base2, 'GET', `/api/profiles/${profileId}?viewerId=${profileId}`);
+    // (e) the profile and the accepted introduction persisted with correct statuses.
+    // The session cookie survives the restart because only the token hash is stored.
+    const got = await api(base2, 'GET', `/api/profiles/${profileId}`, undefined, authA);
     assert.equal(got.status, 200);
     assert.equal(got.json.name, 'Journey Tester');
     assert.equal(got.json.email, 'journey@example.com');
     assert.deepEqual(got.json.interests, ['meditation', 'breathwork']);
 
-    const inbox = await api(base2, 'GET', `/api/introductions?profileId=${profileId}`);
+    const inbox = await api(base2, 'GET', '/api/introductions', undefined, authA);
     assert.equal(inbox.status, 200);
     const persisted = inbox.json.introductions.find((i) => i.id === introId);
     assert.ok(persisted, 'accepted introduction still listed after restart');
     assert.equal(persisted.status, 'accepted');
     assert.equal(persisted.requesterId, profileId);
-    assert.equal(persisted.proposedId, proposedId);
-    assert.ok(persisted.note.length > 0);
+    assert.equal(persisted.proposedId, peerId);
+    assert.ok(persisted.requestMessage.length > 0);
     assert.equal(typeof persisted.score, 'number');
 
     // (f) seed members were NOT duplicated on restart
-    const all = await api(base2, 'GET', '/api/profiles');
+    const all = await api(base2, 'GET', '/api/profiles', undefined, authA);
     assert.equal(all.status, 200);
     const seeds = all.json.profiles.filter((p) => p.isSeed);
     assert.equal(seeds.length, 6, 'exactly 6 seed members after restart');
-    assert.equal(all.json.profiles.length, 7, '6 seeds + 1 user profile, nothing duplicated');
+    assert.equal(all.json.profiles.length, 8, '6 seeds + 2 user profiles, nothing duplicated');
     const seedNames = new Set(seeds.map((p) => p.name));
     assert.equal(seedNames.size, 6, 'seed member names are unique');
   } finally {

@@ -40,10 +40,12 @@ import {
   hasSeedProfiles,
   getProfile,
   getProfileByEmail,
+  getProfileByTokenHash,
+  hashProfileToken,
+  issueProfileToken,
   getVisibleProfile,
   hasMutualConnection,
   isBlockedBetween,
-  listPublicProfiles,
   listCandidateProfiles,
   createProfile,
   updateProfile,
@@ -210,16 +212,59 @@ function toWireIntroduction(intro) {
   };
 }
 
-/** profileId required by most member endpoints; validates existence. */
+// ---------- profile session tokens ----------
+// Server-issued, per-profile bearer tokens. The plaintext token lives only
+// in the member's HttpOnly cookie (or an Authorization header for tooling);
+// the DB stores only its SHA-256 hash. Member-endpoint identity comes
+// EXCLUSIVELY from this token — a caller-supplied profileId is never trusted
+// for identity (it may still appear as a *target* id, e.g. "view profile 7").
+const PROFILE_COOKIE = 'seren_profile';
+
+function readCookie(req, name) {
+  const header = req.headers.cookie;
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) {
+      try { return decodeURIComponent(part.slice(idx + 1).trim()); }
+      catch { return part.slice(idx + 1).trim(); }
+    }
+  }
+  return null;
+}
+
+/** Bearer token from the HttpOnly cookie, else an Authorization header. */
+function readAuthToken(req) {
+  const fromCookie = readCookie(req, PROFILE_COOKIE);
+  if (fromCookie) return fromCookie;
+  const h = req.headers.authorization;
+  if (typeof h === 'string') {
+    const m = /^Bearer\s+(.+)$/i.exec(h.trim());
+    if (m && m[1].trim()) return m[1].trim();
+  }
+  return null;
+}
+
+function setProfileCookie(req, res, token) {
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.setHeader('Set-Cookie',
+    `${PROFILE_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=31536000${secure ? '; Secure' : ''}`);
+}
+
+/**
+ * Identity for member endpoints: resolve the caller from their session
+ * token. 401 when the token is missing or invalid — never data.
+ */
 function requireProfile(req, res) {
-  const id = parseId(req.query.profileId ?? req.body?.profileId);
-  if (id === null) {
-    validationErr(res, [{ field: 'profileId', message: 'profileId is required and must be a positive integer' }]);
+  const token = readAuthToken(req);
+  if (!token) {
+    err(res, 401, ERROR_CODES.UNAUTHORIZED, 'Sign in to continue.');
     return null;
   }
-  const profile = getProfile(id);
+  const profile = getProfileByTokenHash(hashProfileToken(token));
   if (!profile) {
-    err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+    err(res, 401, ERROR_CODES.UNAUTHORIZED, 'Sign in to continue.');
     return null;
   }
   return profile;
@@ -280,6 +325,9 @@ app.post('/api/profiles', (req, res) => {
 
   try {
     const profile = createProfile(req.body);
+    // Issue the member's session token: plaintext goes out only in the
+    // HttpOnly cookie; only its hash is stored.
+    setProfileCookie(req, res, issueProfileToken(profile.id));
     return res.status(201).json(profile);
   } catch (e) {
     // Belt-and-suspenders: UNIQUE constraint race on email.
@@ -291,24 +339,36 @@ app.post('/api/profiles', (req, res) => {
 });
 
 app.get('/api/profiles', (req, res) => {
-  res.json({ profiles: listPublicProfiles() });
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  // Every entry goes through the same privacy filter as the detail
+  // endpoint — notably, free-text intention is gated to mutual connections.
+  const ids = db.prepare('SELECT id FROM profiles WHERE id > 0 AND is_hidden = 0 ORDER BY id ASC')
+    .all().map((r) => r.id);
+  res.json({ profiles: ids.map((id) => getVisibleProfile(id, profile.id)) });
 });
 
 app.get('/api/profiles/:id', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
   const id = parseId(req.params.id);
-  const viewerId = parseId(req.query.viewerId);
-  const profile = id === null ? null : getProfile(id);
-  if (!profile) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
-  // Privacy: filter fields by the target's consent settings unless the
-  // viewer is the profile owner. Email is never exposed to other members.
-  res.json(getVisibleProfile(id, viewerId));
+  const target = id === null ? null : getProfile(id);
+  if (!target) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+  // The viewer is the token-authenticated caller — never a query param.
+  // Owner view (full row incl. email) applies only when the token says so.
+  res.json(getVisibleProfile(id, profile.id));
 });
 
 app.patch('/api/profiles/:id', (req, res) => {
+  const authed = requireProfile(req, res);
+  if (!authed) return;
   const id = parseId(req.params.id);
   if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
   const existing = getProfile(id);
   if (!existing) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+  if (authed.id !== id) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN, 'You can only edit your own profile.');
+  }
 
   const { ok, errors } = validateProfileInput(req.body, { isUpdate: true });
   if (!ok) return validationErr(res, errors);
@@ -399,15 +459,14 @@ app.get('/api/discover', (req, res) => {
 
 // --- agent registry (intelligent agents as discoverable participants) ---
 
-// Register an agent. The operator (a member profile) makes an unverified
-// declaration about the agent via trustNote; the platform does not
-// independently verify agent behavior (see PRODUCT_AUDIT.md A3).
+// Register an agent. The operator is always the token-authenticated caller;
+// their declaration is unverified by the platform (see PRODUCT_AUDIT.md A3).
 app.post('/api/agents', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
   const { ok, errors } = validateAgentInput(req.body, { isUpdate: false });
   if (!ok) return validationErr(res, errors);
-  const operator = getProfile(req.body.operatorProfileId);
-  if (!operator) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Operator profile not found.');
-  const agent = createAgent(req.body);
+  const agent = createAgent({ ...req.body, operatorProfileId: profile.id });
   res.status(201).json(agent);
 });
 
@@ -422,26 +481,27 @@ app.get('/api/agents/:id', (req, res) => {
   res.json(agent);
 });
 
-// Only the registering operator may edit or hide an agent.
+// Only the registering operator may edit or hide an agent. The operator is
+// the token-authenticated caller — never a self-asserted body field.
 app.patch('/api/agents/:id', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
   const id = parseId(req.params.id);
   if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
   const { ok, errors } = validateAgentInput(req.body, { isUpdate: true });
   if (!ok) return validationErr(res, errors);
-  const result = updateAgent(id, req.body, req.body.operatorProfileId);
+  const result = updateAgent(id, req.body, profile.id);
   if (result === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
   if (result === 'forbidden') return err(res, 403, ERROR_CODES.FORBIDDEN, 'Only the registering operator can edit this agent.');
   res.json(result);
 });
 
 app.post('/api/agents/:id/hide', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
   const id = parseId(req.params.id);
   if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
-  const operatorProfileId = req.body?.operatorProfileId;
-  if (!Number.isInteger(operatorProfileId) || operatorProfileId <= 0) {
-    return validationErr(res, [{ field: 'operatorProfileId', message: 'operatorProfileId must be a positive integer' }]);
-  }
-  const result = hideAgent(id, operatorProfileId);
+  const result = hideAgent(id, profile.id);
   if (result === false) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
   if (result === 'forbidden') return err(res, 403, ERROR_CODES.FORBIDDEN, 'Only the registering operator can hide this agent.');
   res.json({ ok: true });
@@ -503,10 +563,10 @@ app.post('/api/introductions/request', (req, res) => {
   const { ok, errors } = validateIntroRequest(req.body);
   if (!ok) return validationErr(res, errors);
 
-  const requester = getProfile(req.body.requesterId);
-  if (!requester) {
-    return err(res, 404, ERROR_CODES.REQUESTER_NOT_FOUND, 'Requester profile not found.');
-  }
+  // The requester is always the token-authenticated caller — a body
+  // requesterId is never trusted for identity.
+  const requester = requireProfile(req, res);
+  if (!requester) return;
   if (!requester.consents || requester.consents.introductions !== true) {
     return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
       'This profile has not opted into introductions.');
@@ -559,10 +619,9 @@ app.post('/api/connections/request', (req, res) => {
   const { ok, errors } = validateConnectionRequest(req.body);
   if (!ok) return validationErr(res, errors);
 
-  const requester = getProfile(req.body.requesterId);
-  if (!requester) {
-    return err(res, 404, ERROR_CODES.REQUESTER_NOT_FOUND, 'Requester profile not found.');
-  }
+  // The requester is always the token-authenticated caller.
+  const requester = requireProfile(req, res);
+  if (!requester) return;
   if (!requester.consents || requester.consents.introductions !== true) {
     return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
       'This profile has not opted into introductions.');
@@ -574,6 +633,9 @@ app.post('/api/connections/request', (req, res) => {
 
   const target = getProfile(req.body.targetId);
   if (!target) return err(res, 404, ERROR_CODES.NOT_FOUND, 'The person you chose was not found.');
+  if (target.id === requester.id) {
+    return validationErr(res, [{ field: 'targetId', message: 'you cannot request a connection with yourself' }]);
+  }
   if (isBlockedBetween(requester.id, target.id)) {
     return err(res, 403, ERROR_CODES.FORBIDDEN, 'You cannot connect with this profile.');
   }
@@ -628,12 +690,9 @@ app.post('/api/connections/request', (req, res) => {
 });
 
 app.get('/api/introductions', (req, res) => {
-  const profileId = parseId(req.query.profileId);
-  if (profileId === null) {
-    return validationErr(res, [
-      { field: 'profileId', message: 'profileId query parameter is required and must be a positive integer' },
-    ]);
-  }
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const profileId = profile.id;
   const intros = listIntroductionsFor(profileId);
   // Attach a privacy-aware view of the other participant.
   const enriched = intros.map((x) => {
@@ -723,11 +782,27 @@ app.post('/api/introductions/:id/end', (req, res) => {
   res.json(toWireIntroduction(setIntroductionStatus(intro.id, INTRO_STATUS.ENDED)));
 });
 
-function transition(targetStatus) {
+/**
+ * Guarded status transition for introductions. Identity comes from the
+ * session token, and the caller's role is enforced: only the recipient
+ * (proposed side) may accept/decline; only the requester may withdraw.
+ */
+function transition(targetStatus, role) {
   return (req, res) => {
+    const profile = requireProfile(req, res);
+    if (!profile) return;
     const id = parseId(req.params.id);
     const intro = id === null ? null : getIntroduction(id);
     if (!intro) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Introduction not found.');
+
+    if (role === 'proposed' && intro.proposedId !== profile.id) {
+      return err(res, 403, ERROR_CODES.FORBIDDEN,
+        'Only the recipient can respond to this request.');
+    }
+    if (role === 'requester' && intro.requesterId !== profile.id) {
+      return err(res, 403, ERROR_CODES.FORBIDDEN,
+        'Only the requester can withdraw this request.');
+    }
 
     const allowed = VALID_TRANSITIONS[intro.status] || [];
     if (!allowed.includes(targetStatus)) {
@@ -740,10 +815,9 @@ function transition(targetStatus) {
   };
 }
 
-app.post('/api/introductions/:id/accept', transition('accepted'));
-app.post('/api/introductions/:id/decline', transition('declined'));
-// MVP simplification (contract): no auth, so any caller may withdraw a proposed intro.
-app.post('/api/introductions/:id/withdraw', transition('withdrawn'));
+app.post('/api/introductions/:id/accept', transition('accepted', 'proposed'));
+app.post('/api/introductions/:id/decline', transition('declined', 'proposed'));
+app.post('/api/introductions/:id/withdraw', transition('withdrawn', 'requester'));
 
 // --- private messages (only after mutual acceptance) ---
 
@@ -821,9 +895,10 @@ app.post('/api/introductions/:id/plan', (req, res) => {
 // --- circles ---
 
 app.get('/api/circles', (req, res) => {
-  const viewerId = parseId(req.query.viewerId);
+  const profile = requireProfile(req, res);
+  if (!profile) return;
   const kind = CIRCLE_KIND_VALUES.includes(req.query.kind) ? req.query.kind : null;
-  res.json({ circles: listCircles({ kind, viewerId }) });
+  res.json({ circles: listCircles({ kind, viewerId: profile.id }) });
 });
 
 app.get('/api/circles/mine', (req, res) => {
@@ -852,8 +927,9 @@ app.post('/api/circles', (req, res) => {
 });
 
 app.get('/api/circles/:id', (req, res) => {
-  const viewerId = parseId(req.query.viewerId);
-  const circle = getCircle(parseId(req.params.id), viewerId);
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const circle = getCircle(parseId(req.params.id), profile.id);
   if (!circle) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Circle not found.');
   if (circle.privacy === 'invite-only' && !circle.isMember) {
     return err(res, 403, ERROR_CODES.FORBIDDEN, 'This circle is invite-only.');
@@ -892,9 +968,7 @@ app.post('/api/circles/:id/request', (req, res) => {
   }
   const { ok, errors } = validateCircleJoin(req.body);
   if (!ok) return validationErr(res, errors);
-  if (req.body.profileId !== profile.id) {
-    return err(res, 403, ERROR_CODES.FORBIDDEN, 'You can only request for yourself.');
-  }
+  // Join requests are always for the authenticated caller.
   const result = requestCircleJoin(circleId, profile.id, req.body.message || '');
   if (!result.ok) {
     return err(res, 409, ERROR_CODES.CONFLICT_STATE, 'You have already requested to join this circle.');
@@ -964,8 +1038,9 @@ app.delete('/api/blocks/:blockedId', (req, res) => {
 app.post('/api/reports', (req, res) => {
   const { ok, errors } = validateReportInput(req.body);
   if (!ok) return validationErr(res, errors);
-  const reporter = getProfile(req.body.reporterId);
-  if (!reporter) return err(res, 404, ERROR_CODES.REQUESTER_NOT_FOUND, 'Reporter profile not found.');
+  // The reporter is always the token-authenticated caller.
+  const reporter = requireProfile(req, res);
+  if (!reporter) return;
   if (!getProfile(req.body.reportedId)) {
     return err(res, 404, ERROR_CODES.NOT_FOUND, 'Reported profile not found.');
   }
@@ -1716,7 +1791,7 @@ function beginGuideFromIntention(profile, session, intentionText) {
  * Consent was given: validate, create the profile through the standard
  * path, attach it to the session, and hand the SAME session to the guide.
  */
-function completeOnboardingChat(res, session, userEntry, turn) {
+function completeOnboardingChat(req, res, session, userEntry, turn) {
   const c = turn.create;
   const payload = {
     name: c.name,
@@ -1738,6 +1813,9 @@ function completeOnboardingChat(res, session, userEntry, turn) {
       'That email already has a SEREN space. Please share a different email.');
   }
   const profile = createProfile(payload);
+  // The new member's session starts here: issue their token cookie now so
+  // every later call is bound to this profile.
+  setProfileCookie(req, res, issueProfileToken(profile.id));
   const first = String(profile.name).trim().split(/\s+/)[0] || 'friend';
   const guide = beginGuideFromIntention(profile, session, c.intention);
   const body = commitChatTurn(session, userEntry, {
@@ -1796,7 +1874,7 @@ app.post('/api/onboarding/chat/message', (req, res) => {
     emailTaken: (email) => !!getProfileByEmail(String(email).trim().toLowerCase()),
   });
   if (turn.create) {
-    return completeOnboardingChat(res, session, userEntry, turn);
+    return completeOnboardingChat(req, res, session, userEntry, turn);
   }
   return res.json(commitChatTurn(session, userEntry, {
     patch: { stage: turn.stage, onboarding: turn.answers },
@@ -1830,7 +1908,9 @@ app.get('/api/onboarding/chat/session/:id', (req, res) => {
 /**
  * Reclaim a profile when the frontend loses its stored profile id.
  * Returns only the id + name on an exact (case-insensitive) email+name
- * match — never the email or any other profile field.
+ * match — never the email or any other profile field. Rotates the profile's
+ * session token and sets it as an HttpOnly cookie, so the relinked device
+ * becomes the authenticated session.
  */
 app.post('/api/auth/relink', (req, res) => {
   const { ok, errors } = validateRelink(req.body);
@@ -1839,6 +1919,7 @@ app.post('/api/auth/relink', (req, res) => {
   const match = lookup
     && String(lookup.name).trim().toLowerCase() === String(req.body.name).trim().toLowerCase();
   if (match) {
+    setProfileCookie(req, res, issueProfileToken(lookup.id));
     return res.json({ profileId: lookup.id, name: lookup.name });
   }
   return err(res, 404, ERROR_CODES.NOT_FOUND,

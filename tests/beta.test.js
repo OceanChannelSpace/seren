@@ -98,10 +98,18 @@ test('correct beta code issues a cookie that unlocks the API', async () => {
   const created = await req('POST', '/api/profiles', { body: profileBody(), cookie });
   assert.equal(created.res.status, 201);
   assert.ok(created.data.id);
+  // Profile creation also issues the member session cookie; member endpoints
+  // need BOTH the beta cookie (outer gate) and the profile cookie (identity).
+  const profileCookie = created.res.headers.get('set-cookie').split(';')[0];
+  assert.ok(profileCookie.startsWith('seren_profile='));
 
-  const listed = await req('GET', '/api/profiles', { cookie });
+  const listed = await req('GET', '/api/profiles', { cookie: `${cookie}; ${profileCookie}` });
   assert.equal(listed.res.status, 200);
   assert.ok(Array.isArray(listed.data.profiles));
+
+  // The profile cookie alone (no beta cookie) still hits the outer gate.
+  const noBeta = await req('GET', '/api/profiles', { cookie: profileCookie });
+  assert.equal(noBeta.res.status, 403);
 });
 
 test('static app shell still loads without a cookie so the gate can render', async () => {

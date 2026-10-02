@@ -276,7 +276,6 @@ export async function renderMatchDetail(root, ctx) {
     }
     try {
       await api.requestConnection({
-        requesterId: profileId,
         targetId,
         connectionType,
         message,

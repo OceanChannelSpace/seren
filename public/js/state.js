@@ -1,6 +1,9 @@
 // SEREN frontend state — a tiny observable store + session persistence.
-// Everything lives client-side; the only durable identity is the profileId
-// stored in localStorage (this device).
+// The durable *authentication* is the HttpOnly `seren_profile` session
+// cookie the server sets on profile creation / relink (never readable from
+// JS). The profileId in localStorage is only a UI hint for this device
+// (which profile is "me" for display and routing) — it is never a
+// credential and the server never trusts it for identity.
 
 const listeners = new Set();
 const state = {

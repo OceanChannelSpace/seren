@@ -43,21 +43,59 @@ function profileBody(overrides = {}) {
   };
 }
 
-async function api(method, path, body) {
+// Identity: the session token arrives as an HttpOnly cookie on profile
+// creation. Pass a created profile (or its `_auth` cookie string) as `auth`
+// and its cookie is sent; the server derives identity from the token alone.
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
-  try { json = await res.json(); } catch { /* non-JSON body */ }
-  return { status: res.status, json };
+  try { json = await res.json(); } catch { /* non-JSON */ }
+  const out = { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+  // Auto-register every created profile so hideOthers() can reach profiles
+  // created outside createProfile().
+  if (method === 'POST' && path === '/api/profiles' && res.status === 201 && json && json.id) {
+    profileRegistry.set(json.id, { ...json, _auth: sessionCookie(out.setCookie) });
+  }
+  return out;
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 async function createProfile(overrides = {}) {
-  const { status, json } = await api('POST', '/api/profiles', profileBody(overrides));
+  const { status, json, setCookie } = await api('POST', '/api/profiles', profileBody(overrides));
   assert.equal(status, 201, 'fixture profile creation should succeed');
-  return json;
+  const profile = { ...json, _auth: sessionCookie(setCookie) };
+  profileRegistry.set(profile.id, profile);
+  return profile;
+}
+
+// Every profile created in this file, for cross-test deterministic matching.
+const profileRegistry = new Map();
+
+/**
+ * Hide every known profile except `keepIds` from the community, using each
+ * profile's own session cookie (profiles can only edit themselves).
+ * Makes auto-match results deterministic within a test.
+ */
+async function hideOthers(keepIds) {
+  const keep = new Set(keepIds);
+  for (const p of profileRegistry.values()) {
+    if (keep.has(p.id)) continue;
+    const r = await api('PATCH', `/api/profiles/${p.id}`, {
+      consents: { introductions: true, community_visible: false, ai_matching: true },
+    }, p);
+    assert.equal(r.status, 200, `hiding profile ${p.id} should succeed`);
+  }
 }
 
 // ---------- tests ----------
@@ -116,21 +154,27 @@ test('POST /api/profiles rejects a duplicate email with 409', async () => {
   assert.equal(json.error.code, 'email_taken');
 });
 
-test('GET /api/profiles returns public-safe profiles (no email/consents)', async () => {
-  const { status, json } = await api('GET', '/api/profiles');
+test('GET /api/profiles requires auth; entries are privacy-filtered (no email/consents/intention)', async () => {
+  const me = await createProfile();
+  const noAuth = await api('GET', '/api/profiles');
+  assert.equal(noAuth.status, 401);
+  assert.equal(noAuth.json.error.code, 'unauthorized');
+
+  const { status, json } = await api('GET', '/api/profiles', undefined, me);
   assert.equal(status, 200);
   assert.ok(Array.isArray(json.profiles) && json.profiles.length > 0);
   for (const p of json.profiles) {
-    assert.deepEqual(Object.keys(p).sort(), ['id', 'intention', 'interests', 'isSeed', 'name']);
-    assert.ok(!('email' in p), 'public profile must not include email');
-    assert.ok(!('consents' in p), 'public profile must not include consents');
+    if (p.id === me.id) continue; // own entry is the full profile
+    assert.ok(!('email' in p), 'list entry must not include email');
+    assert.ok(!('consents' in p), 'list entry must not include consents');
+    assert.ok(!('intention' in p), 'list entry must not include free-text intention');
   }
 });
 
 test('GET /api/profiles/:id returns full profile to owner, privacy-filtered view to others', async () => {
   const created = await createProfile();
-  // Owner view (viewerId === id): full profile including email.
-  const { status, json } = await api('GET', `/api/profiles/${created.id}?viewerId=${created.id}`);
+  // Owner view (token-authenticated as the profile): full profile including email.
+  const { status, json } = await api('GET', `/api/profiles/${created.id}`, undefined, created);
   assert.equal(status, 200);
   assert.equal(json.id, created.id);
   assert.equal(json.email, created.email);
@@ -138,31 +182,50 @@ test('GET /api/profiles/:id returns full profile to owner, privacy-filtered view
 
   // Stranger view: no email, no consents — privacy by default.
   const other = await createProfile({ email: 'other-viewer@example.com', name: 'Other Viewer' });
-  const stranger = await api('GET', `/api/profiles/${created.id}?viewerId=${other.id}`);
+  const stranger = await api('GET', `/api/profiles/${created.id}`, undefined, other);
   assert.equal(stranger.status, 200);
   assert.equal(stranger.json.id, created.id);
   assert.ok(!('email' in stranger.json), 'stranger view must not include email');
   assert.ok(!('consents' in stranger.json), 'stranger view must not include consents');
 
-  const missing = await api('GET', '/api/profiles/999999');
+  // A forged viewerId query param can no longer escalate to the owner view.
+  const forged = await api('GET', `/api/profiles/${created.id}?viewerId=${created.id}`, undefined, other);
+  assert.equal(forged.status, 200);
+  assert.ok(!('email' in forged.json), 'forged viewerId must not disclose email');
+
+  // No token at all → 401, never data.
+  const anon = await api('GET', `/api/profiles/${created.id}`);
+  assert.equal(anon.status, 401);
+
+  const missing = await api('GET', '/api/profiles/999999', undefined, created);
   assert.equal(missing.status, 404);
   assert.equal(missing.json.error.code, 'not_found');
 });
 
-test('PATCH /api/profiles/:id updates fields; invalid input → 400; unknown id → 404', async () => {
+test('PATCH /api/profiles/:id updates own profile; others → 403; invalid input → 400; unknown id → 404', async () => {
   const created = await createProfile();
 
-  const { status, json } = await api('PATCH', `/api/profiles/${created.id}`, { name: 'Renamed Seeker' });
+  const { status, json } = await api('PATCH', `/api/profiles/${created.id}`, { name: 'Renamed Seeker' }, created);
   assert.equal(status, 200);
   assert.equal(json.name, 'Renamed Seeker');
   assert.equal(json.email, created.email);
 
-  const bad = await api('PATCH', `/api/profiles/${created.id}`, { interests: ['not-a-real-interest'] });
+  const bad = await api('PATCH', `/api/profiles/${created.id}`, { interests: ['not-a-real-interest'] }, created);
   assert.equal(bad.status, 400);
   assert.equal(bad.json.error.code, 'validation_error');
   assert.ok(bad.json.error.details.length > 0);
 
-  const missing = await api('PATCH', '/api/profiles/999999', { name: 'Ghost' });
+  // Another member's token cannot edit this profile.
+  const other = await createProfile({ email: 'patch-snoop@example.com', name: 'Patch Snoop' });
+  const forbidden = await api('PATCH', `/api/profiles/${created.id}`, { name: 'Hacked' }, other);
+  assert.equal(forbidden.status, 403);
+  assert.equal(forbidden.json.error.code, 'forbidden');
+
+  // No token → 401.
+  const anon = await api('PATCH', `/api/profiles/${created.id}`, { name: 'Hacked' });
+  assert.equal(anon.status, 401);
+
+  const missing = await api('PATCH', '/api/profiles/999999', { name: 'Ghost' }, created);
   assert.equal(missing.status, 404);
   assert.equal(missing.json.error.code, 'not_found');
 });
@@ -170,7 +233,7 @@ test('PATCH /api/profiles/:id updates fields; invalid input → 400; unknown id 
 test('PATCH /api/profiles/:id rejects a duplicate email with 409', async () => {
   const a = await createProfile();
   const b = await createProfile();
-  const { status, json } = await api('PATCH', `/api/profiles/${b.id}`, { email: a.email });
+  const { status, json } = await api('PATCH', `/api/profiles/${b.id}`, { email: a.email }, b);
   assert.equal(status, 409);
   assert.equal(json.error.code, 'email_taken');
 });
@@ -186,9 +249,8 @@ test('POST /api/introductions/request matches and returns 201 with breakdown', a
   });
 
   const { status, json } = await api('POST', '/api/introductions/request', {
-    requesterId: requester.id,
     intention: 'I seek a tarot study buddy for weekly card pulls and dream journaling',
-  });
+  }, requester);
   assert.equal(status, 201);
 
   const { introduction, proposed, scoreBreakdown } = json;
@@ -212,21 +274,19 @@ test('POST /api/introductions/request matches and returns 201 with breakdown', a
   assert.equal(scoreBreakdown.score, 2 * scoreBreakdown.sharedInterests.length + scoreBreakdown.sharedKeywords.length);
 });
 
-test('POST /api/introductions/request with unknown requester → 404 requester_not_found', async () => {
+test('POST /api/introductions/request without a session token → 401, never data', async () => {
   const { status, json } = await api('POST', '/api/introductions/request', {
-    requesterId: 999999,
     intention: 'I want to meet someone for a shared spiritual practice.',
   });
-  assert.equal(status, 404);
-  assert.equal(json.error.code, 'requester_not_found');
+  assert.equal(status, 401);
+  assert.equal(json.error.code, 'unauthorized');
 });
 
 test('POST /api/introductions/request with invalid intention → 400', async () => {
   const requester = await createProfile();
   const { status, json } = await api('POST', '/api/introductions/request', {
-    requesterId: requester.id,
     intention: 'tiny',
-  });
+  }, requester);
   assert.equal(status, 400);
   assert.equal(json.error.code, 'validation_error');
 });
@@ -235,13 +295,12 @@ test('POST /api/introductions/request without introductions consent → 403 cons
   const requester = await createProfile();
   const patched = await api('PATCH', `/api/profiles/${requester.id}`, {
     consents: { introductions: false, community_visible: true, ai_matching: true },
-  });
+  }, requester);
   assert.equal(patched.status, 200);
 
   const { status, json } = await api('POST', '/api/introductions/request', {
-    requesterId: requester.id,
     intention: 'I want to meet someone for a shared spiritual practice.',
-  });
+  }, requester);
   assert.equal(status, 403);
   assert.equal(json.error.code, 'consent_required');
 });
@@ -249,59 +308,48 @@ test('POST /api/introductions/request without introductions consent → 403 cons
 test('POST /api/introductions/request with no eligible candidates → 404 no_match', async () => {
   const requester = await createProfile();
   // Hide every other profile from the community so none are eligible.
-  const { json: list } = await api('GET', '/api/profiles');
-  for (const p of list.profiles) {
-    if (p.id === requester.id) continue;
-    const r = await api('PATCH', `/api/profiles/${p.id}`, {
-      consents: { introductions: true, community_visible: false, ai_matching: true },
-    });
-    assert.equal(r.status, 200);
-  }
+  await hideOthers([requester.id]);
 
   const { status, json } = await api('POST', '/api/introductions/request', {
-    requesterId: requester.id,
     intention: 'I want to meet someone for a shared spiritual practice.',
-  });
+  }, requester);
   assert.equal(status, 404);
   assert.equal(json.error.code, 'no_match');
 });
 
-test('introduction transitions: accept/decline/withdraw; invalid ones → 409', async () => {
+test('introduction transitions: accept/decline/withdraw; invalid ones → 409; role checks → 403', async () => {
   const requester = await createProfile();
   const p2 = await createProfile();
   const p3 = await createProfile();
   const p4 = await createProfile();
   // Hide every other profile so the matches below are deterministic
   // (all fixtures score identically, so the lowest visible id must win).
-  const { json: list } = await api('GET', '/api/profiles');
-  const keep = new Set([requester.id, p2.id, p3.id, p4.id]);
-  for (const p of list.profiles) {
-    if (keep.has(p.id)) continue;
-    const r = await api('PATCH', `/api/profiles/${p.id}`, {
-      consents: { introductions: true, community_visible: false, ai_matching: true },
-    });
-    assert.equal(r.status, 200);
-  }
+  await hideOthers([requester.id, p2.id, p3.id, p4.id]);
 
   async function requestIntro() {
     const { status, json } = await api('POST', '/api/introductions/request', {
-      requesterId: requester.id,
       intention: 'I want to meet someone for a shared spiritual practice.',
-    });
+    }, requester);
     assert.equal(status, 201, 'fixture intro request should succeed');
     return json.introduction;
   }
 
-  // accept
+  // accept — only the proposed recipient may accept.
   const i1 = await requestIntro();
   assert.equal(i1.proposedId, p2.id);
-  const accepted = await api('POST', `/api/introductions/${i1.id}/accept`);
+  const wrongSide = await api('POST', `/api/introductions/${i1.id}/accept`, undefined, requester);
+  assert.equal(wrongSide.status, 403);
+  assert.equal(wrongSide.json.error.code, 'forbidden');
+  const stranger = await createProfile({ email: 'transition-snoop@example.com', name: 'Transition Snoop' });
+  const snoopAccept = await api('POST', `/api/introductions/${i1.id}/accept`, undefined, stranger);
+  assert.equal(snoopAccept.status, 403);
+  const accepted = await api('POST', `/api/introductions/${i1.id}/accept`, undefined, p2);
   assert.equal(accepted.status, 200);
   assert.equal(accepted.json.status, 'accepted');
 
   // accept is terminal: further accept/decline → 409
   for (const action of ['accept', 'decline']) {
-    const r = await api('POST', `/api/introductions/${i1.id}/${action}`);
+    const r = await api('POST', `/api/introductions/${i1.id}/${action}`, undefined, p2);
     assert.equal(r.status, 409, `re-${action} on accepted intro`);
     assert.equal(r.json.error.code, 'invalid_transition');
   }
@@ -309,20 +357,25 @@ test('introduction transitions: accept/decline/withdraw; invalid ones → 409', 
   // decline (p2 excluded by the accepted pair; p3 wins the tie by lower id)
   const i2 = await requestIntro();
   assert.equal(i2.proposedId, p3.id);
-  const declined = await api('POST', `/api/introductions/${i2.id}/decline`);
+  const declineByRequester = await api('POST', `/api/introductions/${i2.id}/decline`, undefined, requester);
+  assert.equal(declineByRequester.status, 403);
+  const declined = await api('POST', `/api/introductions/${i2.id}/decline`, undefined, p3);
   assert.equal(declined.status, 200);
   assert.equal(declined.json.status, 'declined');
-  const reDecline = await api('POST', `/api/introductions/${i2.id}/decline`);
+  const reDecline = await api('POST', `/api/introductions/${i2.id}/decline`, undefined, p3);
   assert.equal(reDecline.status, 409);
   assert.equal(reDecline.json.error.code, 'invalid_transition');
 
   // withdraw (p2 accepted + p3 declined pairs excluded; p4 is next)
+  // — only the requester may withdraw.
   const i3 = await requestIntro();
   assert.equal(i3.proposedId, p4.id);
-  const withdrawn = await api('POST', `/api/introductions/${i3.id}/withdraw`);
+  const withdrawByProposed = await api('POST', `/api/introductions/${i3.id}/withdraw`, undefined, p4);
+  assert.equal(withdrawByProposed.status, 403);
+  const withdrawn = await api('POST', `/api/introductions/${i3.id}/withdraw`, undefined, requester);
   assert.equal(withdrawn.status, 200);
   assert.equal(withdrawn.json.status, 'withdrawn');
-  const acceptWithdrawn = await api('POST', `/api/introductions/${i3.id}/accept`);
+  const acceptWithdrawn = await api('POST', `/api/introductions/${i3.id}/accept`, undefined, p4);
   assert.equal(acceptWithdrawn.status, 409);
   assert.equal(acceptWithdrawn.json.error.code, 'invalid_transition');
 
@@ -333,37 +386,34 @@ test('introduction transitions: accept/decline/withdraw; invalid ones → 409', 
   assert.equal(i4.status, 'proposed');
 
   // unknown introduction → 404
-  const missing = await api('POST', '/api/introductions/999999/accept');
+  const missing = await api('POST', '/api/introductions/999999/accept', undefined, requester);
   assert.equal(missing.status, 404);
   assert.equal(missing.json.error.code, 'not_found');
+
+  // no token → 401
+  const anon = await api('POST', `/api/introductions/${i4.id}/accept`);
+  assert.equal(anon.status, 401);
 });
 
-test('GET /api/introductions?profileId= lists intros with names; missing profileId → 400', async () => {
+test('GET /api/introductions lists the caller\'s intros; identity comes from the token', async () => {
   const a = await createProfile({ name: 'Lister One' });
   const b = await createProfile({ name: 'Lister Two' });
   // Leave only a and b community-visible so b is the deterministic match.
-  const { json: list } = await api('GET', '/api/profiles');
-  for (const p of list.profiles) {
-    if (p.id === a.id || p.id === b.id) continue;
-    await api('PATCH', `/api/profiles/${p.id}`, {
-      consents: { introductions: true, community_visible: false, ai_matching: true },
-    });
-  }
+  await hideOthers([a.id, b.id]);
 
   const req = await api('POST', '/api/introductions/request', {
-    requesterId: a.id,
     intention: 'I want to meet someone for a shared spiritual practice.',
-  });
+  }, a);
   assert.equal(req.status, 201);
   assert.equal(req.json.proposed.id, b.id);
   const introId = req.json.introduction.id;
 
   // Visible from both sides, with names.
-  for (const pid of [a.id, b.id]) {
-    const r = await api('GET', `/api/introductions?profileId=${pid}`);
-    assert.equal(r.status, 200, `list for profile ${pid}`);
+  for (const p of [a, b]) {
+    const r = await api('GET', '/api/introductions', undefined, p);
+    assert.equal(r.status, 200, `list for profile ${p.id}`);
     const found = r.json.introductions.find((i) => i.id === introId);
-    assert.ok(found, `intro present in list for profile ${pid}`);
+    assert.ok(found, `intro present in list for profile ${p.id}`);
     assert.equal(found.requesterId, a.id);
     assert.equal(found.proposedId, b.id);
     assert.equal(found.requesterName, 'Lister One');
@@ -374,12 +424,19 @@ test('GET /api/introductions?profileId= lists intros with names; missing profile
     assert.ok(found.createdAt);
   }
 
-  const missing = await api('GET', '/api/introductions');
-  assert.equal(missing.status, 400);
-  assert.equal(missing.json.error.code, 'validation_error');
-  assert.ok(missing.json.error.details.length > 0);
+  // A third member sees none of it.
+  const c = await createProfile({ name: 'Lister Three' });
+  const others = await api('GET', '/api/introductions', undefined, c);
+  assert.equal(others.status, 200);
+  assert.ok(!others.json.introductions.some((i) => i.id === introId));
 
-  const bad = await api('GET', '/api/introductions?profileId=nope');
-  assert.equal(bad.status, 400);
-  assert.equal(bad.json.error.code, 'validation_error');
+  // No token → 401, never data.
+  const missing = await api('GET', '/api/introductions');
+  assert.equal(missing.status, 401);
+  assert.equal(missing.json.error.code, 'unauthorized');
+
+  // A forged profileId query param is ignored — the token decides.
+  const forged = await api('GET', `/api/introductions?profileId=${a.id}`, undefined, c);
+  assert.equal(forged.status, 200);
+  assert.ok(!forged.json.introductions.some((i) => i.id === introId));
 });

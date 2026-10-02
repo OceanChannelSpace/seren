@@ -44,21 +44,32 @@ function profileBody(overrides = {}) {
   };
 }
 
-async function api(method, path, body) {
+// Identity: the session token arrives as an HttpOnly cookie on profile
+// creation. Pass a created profile (or its `_auth` cookie string) as `auth`
+// and its cookie is sent; the server derives identity from the token alone.
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 async function createProfile(overrides = {}) {
-  const { status, json } = await api('POST', '/api/profiles', profileBody(overrides));
+  const { status, json, setCookie } = await api('POST', '/api/profiles', profileBody(overrides));
   assert.equal(status, 201, `profile creation failed: ${JSON.stringify(json)}`);
-  return json;
+  return { ...json, _auth: sessionCookie(setCookie) };
 }
 
 // ---------- links validation ----------
@@ -66,19 +77,19 @@ async function createProfile(overrides = {}) {
 test('links validation: bad URLs, unknown keys, and non-objects are rejected', async () => {
   const p = await createProfile();
 
-  const badUrl = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'not a url' } });
+  const badUrl = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'not a url' } }, p);
   assert.equal(badUrl.status, 400);
 
-  const badScheme = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'ftp://example.com/x' } });
+  const badScheme = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'ftp://example.com/x' } }, p);
   assert.equal(badScheme.status, 400);
 
-  const unknownKey = await api('PATCH', `/api/profiles/${p.id}`, { links: { myspace: 'https://example.com' } });
+  const unknownKey = await api('PATCH', `/api/profiles/${p.id}`, { links: { myspace: 'https://example.com' } }, p);
   assert.equal(unknownKey.status, 400);
 
-  const notObject = await api('PATCH', `/api/profiles/${p.id}`, { links: 'https://example.com' });
+  const notObject = await api('PATCH', `/api/profiles/${p.id}`, { links: 'https://example.com' }, p);
   assert.equal(notObject.status, 400);
 
-  const tooLong = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: `https://example.com/${'x'.repeat(300)}` } });
+  const tooLong = await api('PATCH', `/api/profiles/${p.id}`, { links: { website: `https://example.com/${'x'.repeat(300)}` } }, p);
   assert.equal(tooLong.status, 400);
 });
 
@@ -86,7 +97,7 @@ test('links are normalized to https URLs on write', async () => {
   const p = await createProfile();
   const res = await api('PATCH', `/api/profiles/${p.id}`, {
     links: { website: 'example.com', instagram: 'https://instagram.com/calm' },
-  });
+  }, p);
   assert.equal(res.status, 200);
   assert.equal(res.json.links.website, 'https://example.com/');
   assert.equal(res.json.links.instagram, 'https://instagram.com/calm');
@@ -94,8 +105,8 @@ test('links are normalized to https URLs on write', async () => {
 
 test('links are optional: empty object clears them', async () => {
   const p = await createProfile();
-  await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'example.com' } });
-  const cleared = await api('PATCH', `/api/profiles/${p.id}`, { links: {} });
+  await api('PATCH', `/api/profiles/${p.id}`, { links: { website: 'example.com' } }, p);
+  const cleared = await api('PATCH', `/api/profiles/${p.id}`, { links: {} }, p);
   assert.equal(cleared.status, 200);
   assert.deepEqual(cleared.json.links, {});
 });
@@ -106,33 +117,31 @@ test('links are hidden from strangers, visible to the owner and after mutual con
   const a = await createProfile({ name: 'Link Owner' });
   const b = await createProfile({ name: 'Link Viewer', email: uniqueEmail() });
 
-  await api('PATCH', `/api/profiles/${a.id}`, { links: { website: 'https://owner.example' } });
+  await api('PATCH', `/api/profiles/${a.id}`, { links: { website: 'https://owner.example' } }, a);
 
   // Owner always sees their own links.
-  const owner = await api('GET', `/api/profiles/${a.id}?viewerId=${a.id}`);
+  const owner = await api('GET', `/api/profiles/${a.id}`, undefined, a);
   assert.equal(owner.json.links.website, 'https://owner.example/');
 
   // Stranger (no mutual connection) does not.
-  const stranger = await api('GET', `/api/profiles/${a.id}?viewerId=${b.id}`);
+  const stranger = await api('GET', `/api/profiles/${a.id}`, undefined, b);
   assert.equal(stranger.status, 200);
   assert.ok(!('links' in stranger.json), 'links leaked to a stranger');
 
   // Build a mutual connection: A requests, B accepts.
   const req = await api('POST', '/api/connections/request', {
-    requesterId: a.id,
     targetId: b.id,
     connectionType: 'practice-partner',
     message: 'I would love a calm weekly meditation sit together, if that feels aligned.',
-  });
+  }, a);
   assert.equal(req.status, 201);
   const accept = await api('POST', `/api/introductions/${req.json.introduction.id}/respond`, {
-    profileId: b.id,
     response: 'accepted',
-  });
+  }, b);
   assert.equal(accept.status, 200);
 
   // After mutual consent, links are visible.
-  const mutual = await api('GET', `/api/profiles/${a.id}?viewerId=${b.id}`);
+  const mutual = await api('GET', `/api/profiles/${a.id}`, undefined, b);
   assert.equal(mutual.json.links.website, 'https://owner.example/');
   assert.equal(mutual.json.mutual, true);
 });
@@ -147,33 +156,33 @@ test('hidden profiles are excluded from every user-facing surface', async () => 
   db.prepare('UPDATE profiles SET is_hidden = 1 WHERE id = ?').run(hidden.id);
 
   // Public list excludes it.
-  const list = await api('GET', '/api/profiles');
+  const list = await api('GET', '/api/profiles', undefined, visible);
   const ids = list.json.profiles.map((p) => p.id);
   assert.ok(!ids.includes(hidden.id), 'hidden profile in /api/profiles');
   assert.ok(ids.includes(visible.id), 'visible profile missing from /api/profiles');
 
   // Discover excludes it.
-  const disc = await api('GET', `/api/discover?profileId=${visible.id}`);
+  const disc = await api('GET', '/api/discover', undefined, visible);
   assert.equal(disc.status, 200);
   const discIds = (disc.json.matches || disc.json.profiles || []).map((m) => m.id ?? m.profile?.id);
   assert.ok(!discIds.includes(hidden.id), 'hidden profile in /api/discover');
 
   // Direct profile URL returns only the minimal hidden view.
-  const direct = await api('GET', `/api/profiles/${hidden.id}?viewerId=${visible.id}`);
+  const direct = await api('GET', `/api/profiles/${hidden.id}`, undefined, visible);
   assert.equal(direct.status, 200);
   assert.equal(direct.json.hidden, true);
   assert.ok(!('intention' in direct.json), 'hidden profile intention leaked');
   assert.ok(!('links' in direct.json), 'hidden profile links leaked');
 
   // The owner still sees their own full profile.
-  const owner = await api('GET', `/api/profiles/${hidden.id}?viewerId=${hidden.id}`);
+  const owner = await api('GET', `/api/profiles/${hidden.id}`, undefined, hidden);
   assert.equal(owner.json.name, 'Hidden Quinn');
   assert.ok(!owner.json.hidden);
 });
 
 test('qa-named profiles are not auto-hidden at creation (hiding is a one-time migration)', async () => {
   const qa = await createProfile({ name: 'QA Tester' });
-  const list = await api('GET', '/api/profiles');
+  const list = await api('GET', '/api/profiles', undefined, qa);
   const ids = list.json.profiles.map((p) => p.id);
   assert.ok(ids.includes(qa.id), 'newly created QA-named profile should stay visible until hidden');
 });

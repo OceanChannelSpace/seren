@@ -39,15 +39,23 @@ after(async () => {
 let emailSeq = 0;
 const uniqueEmail = () => `onboarder${++emailSeq}@example.com`;
 
-async function api(method, path, body) {
+async function api(method, path, body, auth) {
+  const headers = { 'Content-Type': 'application/json' };
+  const cookie = typeof auth === 'string' ? auth : auth?._auth;
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let json = null;
   try { json = await res.json(); } catch { /* non-JSON */ }
-  return { status: res.status, json };
+  return { status: res.status, json, setCookie: res.headers.get('set-cookie') };
+}
+
+function sessionCookie(setCookieHeader) {
+  const m = /(?:^|,)\s*seren_profile=([^;]+)/.exec(String(setCookieHeader || ''));
+  return m ? `seren_profile=${m[1]}` : null;
 }
 
 /** One candidate member, present before onboarding so proposals have someone. */
@@ -212,7 +220,7 @@ test('saying ready after declining creates the profile from kept answers', async
   assert.equal(ready.status, 201);
   assert.ok(ready.json.profileCreated && ready.json.profileCreated.profileId > 0);
   const pid = ready.json.profileCreated.profileId;
-  const profile = await api('GET', `/api/profiles/${pid}?viewerId=${pid}`);
+  const profile = await api('GET', `/api/profiles/${pid}`, undefined, sessionCookie(ready.setCookie));
   assert.equal(profile.json.email, email);
   assert.deepEqual(profile.json.interests, ['meditation', 'tarot']);
   void sid;
@@ -268,7 +276,7 @@ test('full happy path: consent, guide handoff, brief review, proposals', async (
 
   // The created profile carries everything the interview collected,
   // through the standard creation path (values stored top-level).
-  const profile = await api('GET', `/api/profiles/${pid}?viewerId=${pid}`);
+  const profile = await api('GET', `/api/profiles/${pid}`, undefined, sessionCookie(consent.setCookie));
   assert.equal(profile.json.name, 'Maya Chen');
   assert.equal(profile.json.email, email);
   assert.deepEqual(profile.json.interests, ['meditation', 'tarot']);
