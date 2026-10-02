@@ -151,6 +151,15 @@ export async function renderMatchDetail(root, ctx) {
     </div>`));
   content.appendChild(profileCard);
 
+  // When this person previously declined this viewer, the composer is replaced
+  // with a neutral, non-shaming note. The server enforces the block
+  // regardless; this keeps the UI honest about what is possible.
+  if (person.requestBlocked) {
+    const blockedCard = card();
+    blockedCard.appendChild(el(`<h2 style="margin-top:0">Not available for new requests</h2>`));
+    blockedCard.appendChild(el(`<p style="color:var(--mist)">This person is not open to new requests right now. Take your time. There are many other connections waiting to be discovered.</p>`));
+    content.appendChild(blockedCard);
+  } else {
   // --- request composer ---
   const composerCard = card();
   composerCard.appendChild(el(`<h2 style="margin-top:0">Send an intentional request</h2>`));
@@ -293,6 +302,7 @@ export async function renderMatchDetail(root, ctx) {
   });
   composerCard.appendChild(form);
   content.appendChild(composerCard);
+  } // end requestBlocked else
 
   // --- secondary actions ---
   const actionsCard = card();

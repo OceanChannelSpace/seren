@@ -38,14 +38,14 @@ const RESPOND_CONFIG = {
   decline: {
     button: 'Decline', confirmLabel: 'Decline with a note',
     title: 'Decline this request?',
-    body: 'A kind, brief note is optional. They will see that you declined.',
+    body: 'A kind, brief note is optional. They will see that you declined, and they will not be able to send you new requests unless you allow it later.',
     noteLabel: 'A kind note (optional, max 500 characters)',
     notePlaceholder: 'e.g. Thank you for reaching out — this isn’t the right fit for me right now.',
   },
   decline_hidden: {
     button: 'Decline quietly', confirmLabel: 'Decline quietly',
     title: 'Decline quietly?',
-    body: 'They won’t be notified of a reason. This simply closes the request.',
+    body: 'They will not be notified of a reason. This closes the request and pauses future requests from them. You can allow them again later.',
     noteLabel: null, notePlaceholder: null,
   },
 };
@@ -159,8 +159,25 @@ function requestCard(intro, meId, direction, onDone) {
       }
     });
     actions.appendChild(btn);
-  } else if (intro.status === 'declined_hidden' && direction === 'incoming') {
-    actions.appendChild(el('<p class="request-meta">You passed quietly. Nothing was sent.</p>'));
+  } else if (direction === 'incoming' && (intro.status === 'declined' || intro.status === 'declined_hidden')) {
+    if (intro.status === 'declined_hidden') {
+      actions.appendChild(el('<p class="request-meta">You passed quietly. Nothing was sent.</p>'));
+    }
+    // The decliner's choice alone: lift the block so this person may send
+    // requests again.
+    const allowBtn = el('<button type="button" class="btn btn-ghost btn-small">Allow future requests</button>');
+    allowBtn.addEventListener('click', async () => {
+      allowBtn.disabled = true;
+      try {
+        await api.allowFutureRequests(intro.requesterId);
+        toast('They can send you requests again.');
+        onDone();
+      } catch (e) {
+        toast(friendlyError(e));
+        allowBtn.disabled = false;
+      }
+    });
+    actions.appendChild(allowBtn);
   }
 
   return c;

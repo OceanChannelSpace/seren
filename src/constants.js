@@ -358,4 +358,5 @@ export const ERROR_CODES = Object.freeze({
   UNAUTHORIZED: 'unauthorized',
   FORBIDDEN: 'forbidden',
   CONFLICT_STATE: 'conflict_state',
+  DECLINED_PREVIOUSLY: 'declined_previously',
 });

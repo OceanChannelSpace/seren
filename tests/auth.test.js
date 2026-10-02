@@ -206,7 +206,12 @@ test("A cannot act on B's introductions; participants can", async () => {
   assert.equal(declined.status, 200);
   assert.equal(declined.json.status, 'declined');
 
-  // A fresh request: the requester CAN withdraw their own.
+  // A fresh request after the decline is blocked (declines are durable), so
+  // the recipient lifts the block first; then the requester CAN withdraw
+  // their own new request.
+  const lift = await api('DELETE', `/api/decline-blocks/${a.id}`, undefined, b._auth);
+  assert.equal(lift.status, 200);
+  assert.equal(lift.json.removed, true);
   const req2 = await api('POST', '/api/connections/request', {
     targetId: b.id,
     connectionType: 'practice-partner',

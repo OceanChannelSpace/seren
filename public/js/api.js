@@ -106,6 +106,10 @@ export const endIntroduction = (id, _profileId) =>
 export const acceptIntroduction = (id) => request('POST', `/api/introductions/${id}/accept`);
 export const declineIntroduction = (id) => request('POST', `/api/introductions/${id}/decline`);
 export const withdrawIntroduction = (id) => request('POST', `/api/introductions/${id}/withdraw`);
+// Lift a decline block this member placed: allow future direct requests from
+// the given requester again. The decliner's choice alone.
+export const allowFutureRequests = (requesterId) =>
+  request('DELETE', `/api/decline-blocks/${requesterId}`);
 
 // --- messages + plans ---
 export const listMessages = (id, _profileId) =>

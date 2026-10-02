@@ -152,7 +152,7 @@ test('staged consent: question → accept_with_boundary; terminal states reject 
   assert.equal(again.json.error.code, 'invalid_transition');
 });
 
-test('decline paths: decline and decline_hidden are terminal; declined pairs are re-eligible', async () => {
+test('decline paths: decline and decline_hidden are terminal; declined pairs are blocked until the decliner allows them', async () => {
   const a = await createProfile();
   const b = await createProfile();
   const c = await createProfile();
@@ -169,9 +169,17 @@ test('decline paths: decline and decline_hidden are terminal; declined pairs are
   }, c);
   assert.equal(d2.json.status, 'declined_hidden');
 
-  // After a decline, a fresh request is allowed.
+  // After a decline, a fresh direct request is blocked.
   const r3 = await sendRequest(a, b.id);
-  assert.equal(r3.status, 201);
+  assert.equal(r3.status, 403);
+  assert.equal(r3.json.error.code, 'declined_previously');
+
+  // The decliner can lift the block; then requests flow again.
+  const lift = await api('DELETE', `/api/decline-blocks/${a.id}`, undefined, b);
+  assert.equal(lift.status, 200);
+  assert.equal(lift.json.removed, true);
+  const r4 = await sendRequest(a, b.id);
+  assert.equal(r4.status, 201);
 });
 
 test('messaging opens only after mutual acceptance; blocked pairs cannot message', async () => {

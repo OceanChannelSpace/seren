@@ -428,6 +428,27 @@ if (userVersion < 9) {
   db.exec('PRAGMA user_version = 9');
 }
 
+// v10: durable decline blocks. A decline (either kind) records that the
+// decliner does not want further direct requests from that requester, so
+// "Decline & hide future requests" is actually honored server-side. The
+// decliner can lift it later; lifting is their choice alone.
+function migrateToV10() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS decline_blocks (
+      decliner_id INTEGER NOT NULL,
+      requester_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (decliner_id, requester_id)
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_decline_blocks_decliner ON decline_blocks(decliner_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_decline_blocks_requester ON decline_blocks(requester_id)');
+}
+if (userVersion < 10) {
+  migrateToV10();
+  db.exec('PRAGMA user_version = 10');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -873,6 +894,13 @@ export function getVisibleProfile(id, viewerId) {
     view.prefs = { localRemote: p.prefs.localRemote, formats: p.prefs.formats, languages: p.prefs.languages, availability: p.prefs.availability || '' };
   }
   view.mutual = mutual;
+  // Tasteful availability signal: when the viewer was previously declined by
+  // this person, the request composer disables itself instead of letting the
+  // viewer send a request the server would reject. The viewer already knows
+  // about the decline, so this reveals nothing new.
+  if (Number.isInteger(vid) && vid > 0 && vid !== p.id) {
+    view.requestBlocked = hasDeclineBlock(p.id, vid);
+  }
   return view;
 }
 
@@ -1041,9 +1069,43 @@ export function getNonWithdrawnPairKeys() {
   return keys;
 }
 
+// ---------- decline blocks ----------
+// A decline (either kind) durably records that the decliner does not want
+// further direct requests from that requester. Directional: only requests
+// FROM requester TO decliner are blocked. The decliner can lift it.
+
+/** Record that decliner does not want direct requests from requester. */
+export function recordDeclineBlock(declinerId, requesterId) {
+  db.prepare(`
+    INSERT OR IGNORE INTO decline_blocks (decliner_id, requester_id, created_at)
+    VALUES (?, ?, ?)
+  `).run(declinerId, requesterId, new Date().toISOString());
+}
+
+/** True when requester may not send direct requests to decliner. */
+export function hasDeclineBlock(declinerId, requesterId) {
+  return !!db.prepare(`
+    SELECT 1 FROM decline_blocks WHERE decliner_id = ? AND requester_id = ?
+  `).get(declinerId, requesterId);
+}
+
+/** Lift a block the decliner placed. Returns true when a row was removed. */
+export function removeDeclineBlock(declinerId, requesterId) {
+  return db.prepare(`
+    DELETE FROM decline_blocks WHERE decliner_id = ? AND requester_id = ?
+  `).run(declinerId, requesterId).changes > 0;
+}
+
+/** All requester ids the decliner has blocked, newest first. */
+export function listDeclineBlocks(declinerId) {
+  return db.prepare(`
+    SELECT requester_id, created_at FROM decline_blocks
+    WHERE decliner_id = ? ORDER BY id DESC
+  `).all(declinerId);
+}
+
 /** All introductions involving a profile, with names, newest first. */
-export function listIntroductionsFor(profileId) {
-  const rows = db.prepare(`
+export function listIntroductionsFor(profileId) {  const rows = db.prepare(`
     SELECT i.*, rp.name AS requester_name, pp.name AS proposed_name
     FROM introductions i
     JOIN profiles rp ON rp.id = i.requester_id

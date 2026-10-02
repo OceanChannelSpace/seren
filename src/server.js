@@ -54,6 +54,9 @@ import {
   setIntroductionStatus,
   getNonWithdrawnPairKeys,
   listIntroductionsFor,
+  recordDeclineBlock,
+  hasDeclineBlock,
+  removeDeclineBlock,
   addPass,
   getPassedIds,
   addSavedItem,
@@ -572,7 +575,10 @@ app.post('/api/introductions/request', (req, res) => {
       'This profile has not opted into introductions.');
   }
 
-  const candidates = listCandidateProfiles();
+  const candidates = listCandidateProfiles()
+    // A prior decline is durable: never auto-match the requester with someone
+    // who declined them (unless the decliner later allows requests again).
+    .filter((c) => c && !hasDeclineBlock(c.id, requester.id));
   const best = findBestMatch(
     requester,
     candidates,
@@ -658,6 +664,12 @@ app.post('/api/connections/request', (req, res) => {
     return err(res, 409, ERROR_CODES.CONFLICT_STATE,
       'There is already an active connection request between you two.');
   }
+  // A prior decline is durable: the recipient chose not to receive further
+  // direct requests from this requester. Neutral wording, no shaming.
+  if (hasDeclineBlock(target.id, requester.id)) {
+    return err(res, 403, ERROR_CODES.DECLINED_PREVIOUSLY,
+      'This person is not available for new requests right now.');
+  }
 
   // Optional connection brief: must belong to the requester, be active, and
   // be approved for sharing. Its approved shared_text is snapshotted onto the
@@ -740,6 +752,12 @@ app.post('/api/introductions/:id/respond', (req, res) => {
     responderNote: (req.body.note || '').trim(),
   });
 
+  // A decline is durable: the recipient will not receive further direct
+  // requests from this requester unless they later choose to allow them.
+  if (targetStatus === 'declined' || targetStatus === 'declined_hidden') {
+    recordDeclineBlock(profile.id, intro.requesterId);
+  }
+
   // On acceptance, SEREN posts a warm-intro system message into the thread.
   // Deterministic template: names + each side's approved shared_text only.
   if (targetStatus === 'accepted' || targetStatus === 'accepted_with_boundary') {
@@ -811,6 +829,11 @@ function transition(targetStatus, role) {
     }
 
     const updated = setIntroductionStatus(id, targetStatus);
+    // A decline is durable: the recipient will not receive further direct
+    // requests from this requester unless they later choose to allow them.
+    if (targetStatus === 'declined') {
+      recordDeclineBlock(intro.proposedId, intro.requesterId);
+    }
     res.json(toWireIntroduction(updated));
   };
 }
@@ -818,6 +841,20 @@ function transition(targetStatus, role) {
 app.post('/api/introductions/:id/accept', transition('accepted', 'proposed'));
 app.post('/api/introductions/:id/decline', transition('declined', 'proposed'));
 app.post('/api/introductions/:id/withdraw', transition('withdrawn', 'requester'));
+
+// Lift a decline block the caller placed: allow future direct requests from
+// the given requester again. Only the decliner (token identity) can lift a
+// block they placed; lifting is the decliner's choice alone.
+app.delete('/api/decline-blocks/:requesterId', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const requesterId = parseId(req.params.requesterId);
+  if (requesterId === null) {
+    return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+  }
+  const removed = removeDeclineBlock(profile.id, requesterId);
+  res.json({ removed });
+});
 
 // --- private messages (only after mutual acceptance) ---
 
