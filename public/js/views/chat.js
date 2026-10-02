@@ -100,7 +100,9 @@ export async function renderChat(mount, opts = {}) {
     return t;
   }
 
-  /** Suggested-reply chips under the composer; each click sends as user text. */
+  /** Suggested-reply chips under the composer. A reply marked {fill:true}
+   *  is a writing prompt: tapping drops its text into the composer for
+   *  editing instead of sending it. Plain replies send on tap. */
   function renderQuickReplies(replies) {
     quick.innerHTML = '';
     const list = (replies || []).filter(Boolean);
@@ -108,9 +110,13 @@ export async function renderChat(mount, opts = {}) {
     for (const r of list) {
       const label = typeof r === 'string' ? r : (r.label || r.value || '');
       const value = typeof r === 'string' ? r : (r.value || r.label || '');
+      const fill = typeof r === 'object' && r.fill === true;
       if (!label) continue;
       const b = el(`<button type="button" class="chip">${esc(label)}</button>`);
-      b.addEventListener('click', () => sendUserText(value));
+      b.addEventListener('click', () => {
+        if (fill) { input.value = value; input.focus(); }
+        else sendUserText(value);
+      });
       quick.appendChild(b);
     }
   }
@@ -119,43 +125,30 @@ export async function renderChat(mount, opts = {}) {
     const bubble = el(`<div class="bubble-bot"></div>`);
     if (msg.text) bubble.appendChild(el(`<p class="chat-text">${esc(msg.text)}</p>`));
 
+    // Suggestions are writing prompts, not multiple choice: tapping one
+    // drops its text into the composer so the member can edit and send it
+    // in their own words. For multi-pick questions, tapping several
+    // suggestions builds a comma-separated list in the composer.
     const opts = Array.isArray(msg.options) ? msg.options : [];
-    const inputKind = msg.input || (opts.length ? 'single' : 'free');
+    const inputKind = msg.input || 'free';
 
     if (opts.length) {
-      const row = el(`<div class="chip-row" role="group" aria-label="Suggested answers"></div>`);
-      const selected = new Set();
+      const wrap = el(`<div class="suggest-block"></div>`);
+      wrap.appendChild(el(`<p class="suggest-hint">Not sure where to start? Tap one to begin writing, or use your own words.</p>`));
+      const row = el(`<div class="chip-row" role="group" aria-label="Writing prompts"></div>`);
       for (const o of opts) {
         const label = o.label || o.value || '';
+        if (!label) continue;
         const b = el(`<button type="button" class="chip">${esc(label)}</button>`);
-        if (inputKind === 'single') {
-          // One tap → sent as the user's answer.
-          b.addEventListener('click', () => sendUserText(label));
-        } else if (inputKind === 'multi') {
-          b.setAttribute('aria-pressed', 'false');
-          b.addEventListener('click', () => {
-            if (selected.has(label)) { selected.delete(label); b.setAttribute('aria-pressed', 'false'); }
-            else { selected.add(label); b.setAttribute('aria-pressed', 'true'); }
-          });
-        } else {
-          // Free text with suggestions: fill the composer so the user can
-          // edit before sending.
-          b.addEventListener('click', () => { input.value = label; input.focus(); });
-        }
+        b.addEventListener('click', () => {
+          const cur = input.value.trim();
+          input.value = (inputKind === 'multi' && cur) ? `${cur}, ${label}` : label;
+          input.focus();
+        });
         row.appendChild(b);
       }
-      bubble.appendChild(row);
-
-      if (inputKind === 'multi') {
-        const sendRow = el(`<div class="chat-send-row"></div>`);
-        const done = el(`<button type="button" class="btn btn-primary btn-small">Send my choices</button>`);
-        done.addEventListener('click', () => {
-          if (!selected.size) { toast('Pick one or more above — or write your own below.'); return; }
-          sendUserText([...selected].join(', '));
-        });
-        sendRow.appendChild(done);
-        bubble.appendChild(sendRow);
-      }
+      wrap.appendChild(row);
+      bubble.appendChild(wrap);
     }
 
     if (msg.skippable) {

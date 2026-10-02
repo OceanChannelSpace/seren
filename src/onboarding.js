@@ -74,7 +74,7 @@ export function startOnboarding() {
     answers: {},
     messages: [
       botText(
-        "Hello ✦ I'm SEREN, a guide for meaningful connection. I'll ask a few gentle questions to create your space here — nothing is shared with anyone until you say so.",
+        "Hello ✦ I'm SEREN, a guide for meaningful connection. I'll ask a few gentle questions to create your space here. Nothing is shared with anyone until you say so.",
       ),
       questionMessage({
         id: 'ob_name',
@@ -104,14 +104,14 @@ export function questionForStage(stage, answers = {}) {
     case 'ob_email':
       return questionMessage({
         id: 'ob_email',
-        prompt: `Thanks, ${first}. What's your email? It's how you find your space again on another device — it's never shown to other members.`,
+        prompt: `Thanks, ${first}. What's your email? It's how you find your space again on another device. It's never shown to other members.`,
         type: 'free',
         skippable: false,
       });
     case 'ob_interests':
       return questionMessage({
         id: 'ob_interests',
-        prompt: 'Which of these are part of your life? Choose up to 8 — they describe interests only, never expertise.',
+        prompt: 'Which of these are part of your life? Choose up to 8. They describe interests only, never expertise.',
         type: 'multi',
         options: INTEREST_OPTIONS,
         skippable: false,
@@ -134,14 +134,14 @@ export function questionForStage(stage, answers = {}) {
     case 'ob_values':
       return questionMessage({
         id: 'ob_values',
-        prompt: 'What matters most in a connection right now? Pick up to 3 — or skip.',
+        prompt: 'What matters most in a connection right now? Pick up to 3, or skip.',
         type: 'multi',
         options: VALUE_OPTIONS,
         skippable: true,
       });
     case 'ob_consent':
       return botText(
-        'One last thing, entirely your call: may SEREN introduce you to other members? That means using what you shared to suggest members with shared interests — and letting you appear in suggestions for others. Every introduction needs a yes from both people, and you can pause or leave anytime.',
+        'One last thing, entirely your call: may SEREN introduce you to other members? That means using what you shared to suggest members with shared interests, and letting you appear in suggestions for others. Every introduction needs a yes from both people, and you can pause or leave anytime.',
       );
     case 'ob_declined':
       return botText(
@@ -164,6 +164,11 @@ export function quickRepliesForStage(stage) {
 const NO_RE = /\b(no|not yet|nope|nah|don't|do not|stop|cancel|never mind)\b/i;
 const YES_RE = /\b(yes|yeah|yep|i consent|consent|ok|okay|sure|absolutely|do it|let's do it|sounds good|i'm ready|im ready|ready)\b/i;
 const START_OVER_RE = /^\s*(start over|restart|begin again)\s*$/i;
+
+// Reclaim intents offered when an onboarding email is already taken. The
+// quick replies send these exact phrases as the user's next message.
+const RECLAIM_YES_RE = /reconnect this device/i;
+const RECLAIM_DIFFERENT_RE = /different email/i;
 
 function askAgain(stage, answers, note) {
   const q = questionForStage(stage, answers);
@@ -196,7 +201,7 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
     case 'ob_name': {
       if (!t || t.length > 80) {
         return askAgain(stage, answers,
-          'I need a name to create your space — what should I call you? (80 characters or fewer)');
+          'I need a name to create your space. What should I call you? (80 characters or fewer)');
       }
       if (isSkipText(t)) {
         return askAgain(stage, answers,
@@ -207,16 +212,34 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
     }
 
     case 'ob_email': {
+      // Reclaim intents from the taken-email branch below. The interview
+      // already collected the name (ob_name) and the taken email, so the
+      // member can reconnect this device right here in the conversation.
+      if (RECLAIM_YES_RE.test(t) && answers.pendingEmail) {
+        return { stage, answers, reclaim: { email: answers.pendingEmail, name: answers.name || '' } };
+      }
+      if (RECLAIM_DIFFERENT_RE.test(t)) {
+        const a = { ...answers };
+        delete a.pendingEmail;
+        return next('ob_email', a, [botText('No problem. What email should I use for your new space?')]);
+      }
       if (!EMAIL_RE.test(t)) {
         return askAgain(stage, answers,
-          "That doesn't look like an email address — mind checking it?");
+          "That doesn't look like an email address. Mind checking it?");
       }
       const email = t.toLowerCase();
       if (ctx.emailTaken && ctx.emailTaken(email)) {
-        return askAgain(stage, answers,
-          'It looks like that email already has a SEREN space. If it\u2019s yours, you can reclaim it from the welcome screen — or share a different email.');
+        const a = { ...answers, pendingEmail: email };
+        return {
+          stage: 'ob_email',
+          answers: a,
+          messages: [botText(
+            `It looks like ${email} already has a SEREN space. If it is yours, I can reconnect this device to it right now.`)],
+          quickReplies: ['Yes, reconnect this device', 'Use a different email'],
+        };
       }
       const a = { ...answers, email: t };
+      delete a.pendingEmail;
       return next('ob_interests', a, [questionForStage('ob_interests', a)]);
     }
 

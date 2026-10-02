@@ -1835,10 +1835,9 @@ function chatGuideQuestions(profile, gs) {
 }
 
 /** Quick-reply chips for single/multi questions (label taps), or undefined. */
-function questionQuickReplies(q) {
-  if (!q || (q.type !== 'single' && q.type !== 'multi')) return undefined;
-  return (q.options || []).map((o) => o.label);
-}
+// Suggestions are writing prompts, never multiple choice: the question's
+// options render as tappable prompts that fill the composer, so there are
+// no auto-send option quick replies.
 
 function chatTurnError(status, code, message) {
   return { error: { status, code, message } };
@@ -1869,7 +1868,7 @@ function finishGuideChat(profile, session, gs) {
 function chatHandleSeeking(profile, session, text) {
   if (text.length < 10) {
     return {
-      messages: [botText('Share a little more — a sentence or two — so I can guide you well.')],
+      messages: [botText('Share a little more, a sentence or two, so I can guide you well.')],
     };
   }
   const parsed = parseIntent(text);
@@ -1878,8 +1877,7 @@ function chatHandleSeeking(profile, session, text) {
   if (qs.length === 0) return finishGuideChat(profile, session, gs);
   return {
     patch: { guideSessionId: gs.id, stage: 'followup', pendingQuestionId: qs[0].id },
-    messages: [botText('Thank you — I hear you.'), questionMessage(qs[0])],
-    quickReplies: questionQuickReplies(qs[0]),
+    messages: [botText('Thank you. I hear you.'), questionMessage(qs[0])],
   };
 }
 
@@ -1891,7 +1889,6 @@ function chatAdvanceFollowup(profile, session, gs, answers) {
   return {
     patch: { pendingQuestionId: remaining[0].id },
     messages: [questionMessage(remaining[0])],
-    quickReplies: questionQuickReplies(remaining[0]),
   };
 }
 
@@ -1911,10 +1908,10 @@ function chatHandleFollowup(profile, session, text) {
       if (q.skippable === false) {
         return {
           messages: [
-            botText('This one needs an answer — pick whatever feels closest.'),
+            botText('This one needs an answer. Write whatever feels closest, or tap a suggestion below.'),
             questionMessage(q),
           ],
-          quickReplies: questionQuickReplies(q) || [],
+
         };
       }
       answers = answerQuestion({ answers: gs.answers, questions }, q.id, null);
@@ -1925,10 +1922,10 @@ function chatHandleFollowup(profile, session, text) {
       if (!matched || matched.length === 0) {
         return {
           messages: [
-            botText("I didn't quite catch that — which of these fits best?"),
+            botText("I didn't quite catch that. Try tapping a suggestion, or write it in your own words."),
             questionMessage(q),
           ],
-          quickReplies: questionQuickReplies(q) || [],
+
         };
       }
       const value = q.type === 'single' ? matched[0] : matched;
@@ -1949,7 +1946,7 @@ function chatHandleBriefReview(profile, session, text) {
     if (!(b.shared_text || '').trim()) {
       return {
         messages: [botText(
-          'Your brief needs the "exact text" section filled in — you can add it on the brief page, or tell me here and I\'ll add it.',
+          'Your brief needs the "exact text" section filled in. You can add it on the brief page, or tell me here and I\'ll add it.',
         )],
       };
     }
@@ -1986,14 +1983,14 @@ function chatHandleBriefReview(profile, session, text) {
       },
       messages: [
         botText('Let\'s begin again, fresh.'),
-        botText('Who — or what kind of connection — would feel meaningful right now?'),
+        botText('Who, or what kind of connection, would feel meaningful right now?'),
       ],
-      quickReplies: STARTERS,
+      quickReplies: STARTERS.map((label) => ({ label, fill: true })),
     };
   }
   return {
     messages: [botText(
-      'I can help you finish your brief — say "looks good" when it\'s ready, or tell me what to change.',
+      'I can help you finish your brief. Say "looks good" when it\'s ready, or tell me what to change.',
     )],
     quickReplies: APPROVE_QUICK_REPLIES,
   };
@@ -2039,7 +2036,7 @@ function chatHandleProposals(profile, session, text) {
   }
   return {
     messages: [botText(
-      'Your suggestions are just above — tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.',
+      'Your suggestions are just above. Tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.',
     )],
     quickReplies: ['Start a new brief'],
   };
@@ -2055,14 +2052,14 @@ function chatHandleConfirmReplace(profile, session, text) {
       },
       messages: [
         botText('Fresh start it is.'),
-        botText('Who — or what kind of connection — would feel meaningful right now?'),
+        botText('Who, or what kind of connection, would feel meaningful right now?'),
       ],
-      quickReplies: STARTERS,
+      quickReplies: STARTERS.map((label) => ({ label, fill: true })),
     };
   }
   return {
     patch: { stage: 'proposals' },
-    messages: [botText('Keeping your brief as it is — your suggestions are just above.')],
+    messages: [botText('Keeping your brief as it is. Your suggestions are just above.')],
   };
 }
 
@@ -2112,7 +2109,7 @@ app.post('/api/chat/start', (req, res) => {
     const proposals = gated ? briefProposals(profile, brief) : [];
     const firstName = String(profile.name || 'friend').trim().split(/\s+/)[0] || 'friend';
     const messages = [botText(
-      `Welcome back${firstName.toLowerCase() === 'friend' ? '' : `, ${firstName}`}. Your brief is active — here are your current suggestions.`,
+      `Welcome back${firstName.toLowerCase() === 'friend' ? '' : `, ${firstName}`}. Your brief is active. Here are your current suggestions.`,
     )];
     const session = createChatSession({
       profileId: profile.id, stage: 'proposals', briefId: brief.id, transcript: messages,
@@ -2127,7 +2124,7 @@ app.post('/api/chat/start', (req, res) => {
   }
   if (brief && brief.status === 'draft') {
     const messages = [botText(
-      'Welcome back. You have a draft brief we haven\'t finished — want to review it, or start fresh?',
+      'Welcome back. You have a draft brief we haven\'t finished. Want to review it, or start fresh?',
     )];
     const session = createChatSession({
       profileId: profile.id, stage: 'resume_offer', briefId: brief.id, transcript: messages,
@@ -2145,7 +2142,7 @@ app.post('/api/chat/start', (req, res) => {
   return res.status(201).json({
     session: chatSessionView(session),
     messages,
-    quickReplies: STARTERS,
+    quickReplies: STARTERS.map((label) => ({ label, fill: true })),
   });
 });
 
@@ -2228,6 +2225,22 @@ app.post('/api/chat/message', (req, res) => {
  * question, the brief under review, or current proposals) so the frontend
  * can rebuild the thread after a reload.
  */
+/**
+ * The frontend replays the resume transcript as plain bubbles and then
+ * renders the current question interactively (suggestion prompts, inputs).
+ * If the transcript already ends with that same question, drop the trailing
+ * copy from the payload (storage keeps it) so the question never renders
+ * twice. Returns the transcript to send.
+ */
+function trimTrailingResumeQuestion(transcript, questionId) {
+  if (!questionId || !Array.isArray(transcript) || transcript.length === 0) return transcript;
+  const last = transcript[transcript.length - 1];
+  if (last && last.role === 'bot' && last.questionId === questionId) {
+    return transcript.slice(0, -1);
+  }
+  return transcript;
+}
+
 app.get('/api/chat/session/:id', (req, res) => {
   const profile = requireProfile(req, res);
   if (!profile) return;
@@ -2241,6 +2254,9 @@ app.get('/api/chat/session/:id', (req, res) => {
 
   const body = { session: chatSessionView(session), transcript: session.transcript || [] };
   Object.assign(body, chatResumeContext(profile, session));
+  if (body.question && body.question.questionId) {
+    body.transcript = trimTrailingResumeQuestion(body.transcript, body.question.questionId);
+  }
   res.json(body);
 });
 
@@ -2267,7 +2283,6 @@ function beginGuideFromIntention(profile, session, intentionText) {
   return {
     patch: { guideSessionId: gs.id, stage: 'followup', pendingQuestionId: qs[0].id },
     messages: [questionMessage(qs[0])],
-    quickReplies: questionQuickReplies(qs[0]),
   };
 }
 
@@ -2275,6 +2290,38 @@ function beginGuideFromIntention(profile, session, intentionText) {
  * Consent was given: validate, create the profile through the standard
  * path, attach it to the session, and hand the SAME session to the guide.
  */
+/**
+ * Reconnect this device to an existing profile from inside the onboarding
+ * chat. The email matched an existing space and the member confirmed it is
+ * theirs; the name they gave in the interview must match the profile's name
+ * (case-insensitive), exactly like /api/auth/relink. Rotates the session
+ * token and sets the HttpOnly cookie, so this device becomes authenticated.
+ */
+function reclaimOnboardingChat(req, res, session, userEntry, turn) {
+  const email = String(turn.reclaim.email || '').trim().toLowerCase();
+  const name = String(turn.reclaim.name || '').trim();
+  const lookup = getProfileByEmail(email);
+  const match = lookup
+    && String(lookup.name).trim().toLowerCase() === name.toLowerCase();
+  if (!match) {
+    const body = commitChatTurn(session, userEntry, {
+      messages: [botText(
+        `Hmm, "${name}" doesn't match the space under that email. You can try a different email, or start over to begin fresh.`)],
+      quickReplies: ['Use a different email', 'Start over'],
+    });
+    return res.json(body);
+  }
+  setProfileCookie(req, res, issueProfileToken(lookup.id));
+  const first = String(lookup.name).trim().split(/\s+/)[0] || 'friend';
+  const body = commitChatTurn(session, userEntry, {
+    patch: { profileId: lookup.id },
+    messages: [botText(`Welcome back, ${first}. This device is reconnected to your space.`)],
+  });
+  body.profileCreated = { profileId: lookup.id };
+  body.reclaimed = true;
+  return res.json(body);
+}
+
 function completeOnboardingChat(req, res, session, userEntry, turn) {
   const c = turn.create;
   const payload = {
@@ -2306,7 +2353,7 @@ function completeOnboardingChat(req, res, session, userEntry, turn) {
     patch: { profileId: profile.id, ...guide.patch },
     messages: [
       botText(
-        `Your space is ready, ${first} ✦ Based on what you shared, I'll ask a few thoughtful questions, then suggest members with shared interests — nothing is shared until you approve it.`,
+        `Your space is ready, ${first} ✦ Based on what you shared, I'll ask a few thoughtful questions, then suggest members with shared interests. Nothing is shared until you approve it.`,
       ),
       ...guide.messages,
     ],
@@ -2357,6 +2404,11 @@ app.post('/api/onboarding/chat/message', (req, res) => {
   const turn = handleOnboardingTurn(session.stage, session.onboarding || {}, text, {
     emailTaken: (email) => !!getProfileByEmail(String(email).trim().toLowerCase()),
   });
+  // Inline reclaim: the interview already knows the name and the taken
+  // email, so the member reconnects this device without leaving the chat.
+  if (turn.reclaim) {
+    return reclaimOnboardingChat(req, res, session, userEntry, turn);
+  }
   if (turn.create) {
     return completeOnboardingChat(req, res, session, userEntry, turn);
   }
@@ -2375,7 +2427,14 @@ app.get('/api/onboarding/chat/session/:id', (req, res) => {
   const sessionId = parseId(req.params.id);
   const session = sessionId === null ? null : getChatSession(sessionId);
   if (!session) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Chat session not found.');
-  const body = { session: chatSessionView(session), transcript: session.transcript || [] };
+  const storedTranscript = session.transcript || [];
+  const resumeQ = isOnboardingStage(session.stage)
+    ? questionForStage(session.stage, session.onboarding || {})
+    : null;
+  const transcript = resumeQ && resumeQ.kind === 'question'
+    ? trimTrailingResumeQuestion(storedTranscript, resumeQ.questionId)
+    : storedTranscript;
+  const body = { session: chatSessionView(session), transcript };
   if (session.profileId) {
     const profile = getProfile(session.profileId);
     if (!profile) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');

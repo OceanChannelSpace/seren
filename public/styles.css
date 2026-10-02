@@ -1068,6 +1068,14 @@ body.beta-locked .site-footer { display: none; }
 .chat-quick:empty { display: none; }
 .chat-quick .chip { font-size: 0.88rem; }
 
+/* writing-prompt suggestions inside a question bubble — they fill the
+   composer on tap, they never answer for the member */
+.suggest-block { margin-top: 0.7rem; }
+.suggest-hint {
+  margin: 0 0 0.45rem; font-size: 0.82rem; color: var(--mist-dim);
+  font-style: italic;
+}
+
 /* member website/social links (profile, connection header) */
 .link-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .link-list a {

@@ -392,3 +392,34 @@ test('auth relink: wrong name → 404, unknown email → 404, missing name → 4
   const missingName = await api('POST', '/api/auth/relink', { email: me.email });
   assert.equal(missingName.status, 400);
 });
+
+test('guide resume does not duplicate the pending question', async () => {
+  const me = await createProfile({ name: 'Rita Resumer' });
+  const started = await startChat(me);
+  const sid = started.session.id;
+  const r = await sendChat(me, sid, 'I want a meditation practice partner to sit with weekly');
+  assert.equal(r.status, 200);
+  assert.equal(r.json.session.stage, 'followup');
+  const qmsg = r.json.messages.find((m) => m.kind === 'question');
+  assert.ok(qmsg && qmsg.questionId, 'expected a question with an id');
+  const resumed = await api('GET', `/api/chat/session/${sid}`, undefined, me);
+  assert.equal(resumed.status, 200);
+  assert.ok(resumed.json.question, 'resume should still carry the interactive question');
+  assert.equal(resumed.json.question.questionId, qmsg.questionId);
+  const transcript = resumed.json.transcript || [];
+  const last = transcript[transcript.length - 1] || {};
+  assert.ok(
+    last.questionId !== qmsg.questionId,
+    'payload transcript must not end with the same question the client renders interactively',
+  );
+});
+
+test('seeking starters arrive as fill-in prompts, not auto-send chips', async () => {
+  const me = await createProfile({ name: 'Sam Starter' });
+  const json = await startChat(me);
+  assert.ok(Array.isArray(json.quickReplies) && json.quickReplies.length > 0);
+  for (const qr of json.quickReplies) {
+    assert.equal(qr && qr.fill, true, 'seeking suggestions must fill the composer, not send');
+    assert.ok(qr.label, 'fill prompt needs a label');
+  }
+});

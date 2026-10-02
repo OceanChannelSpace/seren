@@ -12,12 +12,12 @@ export const STARTERS = Object.freeze([
   'Someone to explore dreamwork with',
   'A local conscious community',
   'A creative collaborator',
-  'Curious and open — not sure yet',
+  'Curious and open, not sure yet',
 ]);
 
 /** Quick replies shown under a connection-brief card. */
 export const APPROVE_QUICK_REPLIES = Object.freeze([
-  'Looks good — find matches',
+  'Looks good, find matches',
   'Edit intention',
   'Edit what I offer',
   'Edit boundaries',
@@ -52,12 +52,12 @@ export function greetingMessages(profile) {
     {
       role: 'bot',
       kind: 'text',
-      text: `Hello ${firstName} ✦ I'm the SEREN guide. I ask a few thoughtful questions and draft a connection brief for your review — nothing is shared with anyone until you approve it.`,
+      text: `Hello ${firstName} ✦ I'm the SEREN guide. I ask a few thoughtful questions and draft a connection brief for your review. Nothing is shared with anyone until you approve it.`,
     },
     {
       role: 'bot',
       kind: 'text',
-      text: 'Who — or what kind of connection — would feel meaningful right now?',
+      text: 'Who, or what kind of connection, would feel meaningful right now?',
     },
   ];
 }
@@ -102,7 +102,7 @@ export function briefMessage(brief) {
   return {
     role: 'bot',
     kind: 'brief',
-    text: 'Here is what I understood — your connection brief. Read it over; nothing is shared until you approve it.',
+    text: 'Here is what I understood: your connection brief. Read it over; nothing is shared until you approve it.',
     brief: publicBrief(brief),
   };
 }

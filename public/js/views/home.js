@@ -22,7 +22,7 @@ export async function renderHome(root, ctx) {
   }
 
   const { root: shell, body } = pageShell(
-    'Who — or what kind of connection — would feel meaningful right now?',
+    'Who, or what kind of connection, would feel meaningful right now?',
     'Begin here',
   );
   shell.classList.add('guide-hero');

@@ -52,6 +52,9 @@ export async function renderOnboardingChat(mount) {
       const created = data && data.profileCreated;
       if (created && created.profileId) {
         setProfileId(created.profileId);
+        // A reclaim reconnects an already-onboarded member: the interview
+        // is over, so take them straight to their space.
+        if (data.reclaimed) navigate('/');
       }
     },
   });

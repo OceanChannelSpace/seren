@@ -193,7 +193,7 @@ const QUESTION_DEFS = {
   // Free-text questions — never inferable, always asked (until answered/skipped).
   offer: {
     id: 'offer',
-    prompt: 'What could you offer the other person — listening, experience, a practice, collaboration?',
+    prompt: 'What could you offer the other person? For example: listening, experience, a practice, collaboration.',
     type: 'free',
     skippable: true,
   },
@@ -222,8 +222,8 @@ const QUESTION_DEFS = {
     type: 'single',
     skippable: true,
     options: () => optionList([
-      ['local', 'Nearby — in my area'],
-      ['remote', 'Anywhere — online is fine'],
+      ['local', 'Nearby, in my area'],
+      ['remote', 'Anywhere, online is fine'],
       ['either', 'Either works'],
     ]),
   },

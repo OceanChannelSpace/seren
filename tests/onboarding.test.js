@@ -313,3 +313,100 @@ test('post-handoff turns keep working through the onboarding endpoints', async (
   assert.ok(['followup', 'brief_review'].includes(r.json.session.stage));
   void sid;
 });
+
+// ---------- inline reclaim of an existing space ----------
+
+async function seedMember(name, email) {
+  const r = await api('POST', '/api/profiles', {
+    name,
+    email,
+    interests: ['meditation', 'yoga'],
+    intention: 'I am here to find kindred spirits for quiet practice and honest conversation.',
+    connectionPrefs: { seeking: ['practice-partner'] },
+    consents: { introductions: true, community_visible: true, ai_matching: true },
+  });
+  assert.equal(r.status, 201, 'member seed failed: ' + JSON.stringify(r.json));
+  return { id: r.json.id, email };
+}
+
+test('taken email offers inline reclaim instead of looping', async () => {
+  const member = await seedMember('Rae Reclaim', uniqueEmail());
+  const s = await api('POST', '/api/onboarding/chat/start', {});
+  const sid = s.json.session.id;
+  const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
+  await say('Rae Reclaim');
+  const r = await say(member.email);
+  assert.equal(r.status, 200);
+  // Still on the email step, with a reclaim offer — not a bare re-ask.
+  assert.equal(r.json.session.stage, 'ob_email');
+  const texts = (r.json.messages || []).map((m) => m.text || '').join(' ');
+  assert.ok(/reconnect this device/i.test(texts), 'expected reclaim offer, got: ' + texts);
+  assert.ok(!/welcome screen/.test(texts), 'must not shunt the member to the welcome screen');
+  assert.deepEqual(r.json.quickReplies, ['Yes, reconnect this device', 'Use a different email']);
+  void sid;
+});
+
+test('confirming reclaim reconnects the device and issues the session cookie', async () => {
+  const member = await seedMember('Rae Reclaim', uniqueEmail());
+  const s = await api('POST', '/api/onboarding/chat/start', {});
+  const sid = s.json.session.id;
+  const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
+  await say('Rae Reclaim');
+  await say(member.email);
+  const r = await say('Yes, reconnect this device');
+  assert.equal(r.status, 200);
+  assert.ok(r.json.profileCreated, 'expected profileCreated on reclaim');
+  assert.equal(r.json.profileCreated.profileId, member.id);
+  assert.equal(r.json.reclaimed, true);
+  const cookie = sessionCookie(r.setCookie);
+  assert.ok(cookie, 'expected a seren_profile cookie on reclaim');
+  // The new cookie authenticates as the reclaimed profile.
+  const me = await api('GET', `/api/profiles/${member.id}`, undefined, cookie);
+  assert.equal(me.status, 200);
+  assert.equal(me.json.email, member.email);
+});
+
+test('reclaim with a non-matching name is refused gracefully', async () => {
+  const member = await seedMember('Rae Reclaim', uniqueEmail());
+  const s = await api('POST', '/api/onboarding/chat/start', {});
+  const sid = s.json.session.id;
+  const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
+  await say('Someone Else');
+  await say(member.email);
+  const r = await say('Yes, reconnect this device');
+  assert.equal(r.status, 200);
+  assert.ok(!r.json.profileCreated, 'must not reclaim on name mismatch');
+  assert.ok(!sessionCookie(r.setCookie), 'must not issue a session cookie on mismatch');
+  const texts = (r.json.messages || []).map((m) => m.text || '').join(' ');
+  assert.ok(/doesn.t match/i.test(texts), 'expected a name-mismatch note, got: ' + texts);
+});
+
+test('choosing a different email continues the interview cleanly', async () => {
+  const member = await seedMember('Rae Reclaim', uniqueEmail());
+  const fresh = uniqueEmail();
+  const s = await api('POST', '/api/onboarding/chat/start', {});
+  const sid = s.json.session.id;
+  const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
+  await say('Rae Reclaim');
+  await say(member.email);
+  const r = await say('Use a different email');
+  assert.equal(r.status, 200);
+  assert.equal(r.json.session.stage, 'ob_email');
+  const r2 = await say(fresh);
+  assert.equal(r2.json.session.stage, 'ob_interests', 'a fresh email should advance the interview');
+});
+
+test('resume does not duplicate the current question', async () => {
+  const s = await api('POST', '/api/onboarding/chat/start', {});
+  const sid = s.json.session.id;
+  const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
+  await say('Maya Chen');
+  // Invalid email triggers askAgain: transcript ends with the question.
+  await say('not-an-email');
+  const r = await api('GET', `/api/onboarding/chat/session/${sid}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.question.questionId, 'ob_email');
+  const transcript = r.json.transcript || [];
+  const last = transcript[transcript.length - 1] || {};
+  assert.ok(last.questionId !== 'ob_email', 'payload transcript must not end with the duplicated question');
+});
