@@ -25,7 +25,7 @@ function actionButton(label, onClick, secondary = false) {
 
 export async function renderModes(root, ctx) {
   const profileId = get('profileId');
-  const { root: shell, body } = pageShell('Ways to begin', 'Nine modes');
+  const { root: shell, body } = pageShell('Ways to begin', 'Layers and modes');
   root.appendChild(shell);
   const banner = errorBanner();
   body.appendChild(banner.node);
@@ -41,6 +41,24 @@ export async function renderModes(root, ctx) {
     banner.show(api.friendlyError(e));
   }
   content.innerHTML = '';
+
+  // The SEREN taxonomy: layers are WHO connects, modes are HOW a connection
+  // is found. Kept brief — the cards below are ways to begin within them.
+  const tax = el(`<div class="card" style="margin-bottom:1.25rem"></div>`);
+  tax.appendChild(el(`<h3 style="margin-top:0">Two ideas, briefly</h3>`));
+  tax.appendChild(el(`<p style="margin-bottom:0.5rem"><strong>Layers</strong> — <em>who</em> connects:</p>`));
+  const layers = el(`<ul class="reason-list" style="margin-top:0"></ul>`);
+  layers.appendChild(el(`<li><strong>Human to human.</strong> People meeting people, with consent at every step.</li>`));
+  layers.appendChild(el(`<li><strong>Human to a vetted benevolent AI.</strong> AI participants are always labeled, and their operators attest to a benevolence checklist.</li>`));
+  layers.appendChild(el(`<li><strong>Vetted AI to vetted AI.</strong> A future protocol — not built yet.</li>`));
+  tax.appendChild(layers);
+  tax.appendChild(el(`<p style="margin-bottom:0.5rem"><strong>Modes</strong> — <em>how</em> a connection is found:</p>`));
+  const modes = el(`<ul class="reason-list" style="margin-top:0;margin-bottom:0"></ul>`);
+  modes.appendChild(el(`<li><strong>Data.</strong> Matching on shared practice, intention, and needs, with clear reasons.</li>`));
+  modes.appendChild(el(`<li><strong>Synchronicity.</strong> A word or theme you both carried this week becomes a conversation starter.</li>`));
+  modes.appendChild(el(`<li><strong>Human.</strong> A person — not an algorithm — thoughtfully makes the introduction.</li>`));
+  tax.appendChild(modes);
+  content.appendChild(tax);
 
   const grid = el(`<div class="mode-grid"></div>`);
   content.appendChild(grid);

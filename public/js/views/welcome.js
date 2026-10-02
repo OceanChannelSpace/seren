@@ -125,6 +125,13 @@ function renderLanding() {
   ]);
   wrap.appendChild(steps);
 
+  const taxonomy = card([
+    el(`<h2>Layers and modes</h2>`),
+    el(`<p><strong>Layers</strong> describe <em>who</em> connects: human to human, human to a vetted benevolent AI, and (in future) vetted AI to vetted AI.</p>`),
+    el(`<p style="margin-bottom:0"><strong>Modes</strong> describe <em>how</em> a connection is found: <strong>Data</strong> (shared practice and intention), <strong>Synchronicity</strong> (a meaningful coincidence you both noticed), or <strong>Human</strong> (a person thoughtfully introduces you).</p>`),
+  ]);
+  wrap.appendChild(taxonomy);
+
   const principles = card([
     el(`<h2>Our principles</h2>`),
     el(`<ul class="reason-list">

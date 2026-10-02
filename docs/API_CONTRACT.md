@@ -4,6 +4,8 @@
 shapes or field names without updating this file and notifying the
 coordinator.
 
+**Product taxonomy.** Three connection layers (who connects: Human to Human, Human to vetted benevolent AI, vetted AI to vetted AI) and three connection modes (how connections are found: Data, Synchronicity, Human). Vetted-AI-to-vetted-AI networking is a future protocol — not designed or built in this MVP.
+
 ## Data model (SQLite)
 
 ### `profiles`
@@ -114,11 +116,14 @@ Base: `/api`. All JSON. Error shape:
 | GET | `/api/beta/status` | — | 200 `{beta:bool, entered:bool}` (always open, even in beta mode) | — |
 | POST | `/api/beta/enter` | `{code}` | 200 `{entered:true}` + `HttpOnly` beta cookie | 403 `beta_code_invalid` |
 | GET | `/api/discover?profileId=&agents=true` | query: profileId required; `agents=true` adds agent suggestions | 200 `{matches:[{profile,reasons,sharedPractices,sharedIntentions,sharedFormats,serendipity,saved}],agents:[{agent,reasons}]}` | 400, 404 |
-| POST | `/api/agents` | `{operatorProfileId,name,description,capabilities[],endpointUrl,trustNote}` | 201 agent (kind `ai`, unverified operator declaration) | 400 `validation_error`, 404 (unknown operator) |
+| POST | `/api/agents` | `{name,description,capabilities[],endpointUrl,trustNote,vetting{5 booleans}}` (operator from token) | 201 agent (kind `ai`) | 400 `validation_error` (checklist required) |
 | GET | `/api/agents` | — | 200 `{agents:[]}` (visible only) | — |
 | GET | `/api/agents/:id` | — | 200 agent | 404 `not_found` |
-| PATCH | `/api/agents/:id` | `{operatorProfileId,...fields}` | 200 agent | 400, 403 (non-operator), 404 |
-| POST | `/api/agents/:id/hide` | `{operatorProfileId}` | 200 `{ok:true}` (soft-hide) | 400, 403 (non-operator), 404 |
+| PATCH | `/api/agents/:id` | `{...fields}` (operator from token) | 200 agent | 400, 403 (non-operator), 404 |
+| POST | `/api/agents/:id/hide` | — (operator from token) | 200 `{ok:true}` (soft-hide) | 403 (non-operator), 404 |
+| POST | `/api/agents/:id/review` | — (host only) | 200 agent (trustTier `host-reviewed`) | 403 (non-host), 404 |
+
+Agent trust tiers: `unverified` (no checklist on file), `operator-attested` (operator affirmed the 5-item benevolence checklist), `host-reviewed` (a SEREN host reviewed the listing). The word "Verified" is never displayed; no tier is a platform guarantee. `GET /api/meta` exposes `agentVetting` (the checklist items). `GET /api/me` returns the caller's owner-view profile plus `isHost`.
 
 ### `agents` (v8 — intelligent agents as discoverable participants)
 
