@@ -69,6 +69,11 @@ export const listProfiles = () => request('GET', '/api/profiles');
 export const getProfile = (id) =>
   request('GET', `/api/profiles/${id}`);
 export const updateProfile = (id, patch) => request('PATCH', `/api/profiles/${id}`, patch);
+/**
+ * Permanently deletes the caller's own profile and all of its data.
+ * Identity comes from the session token; there is no id to pass.
+ */
+export const deleteMyProfile = () => request('DELETE', '/api/profiles/me');
 
 // --- discover ---
 export const discover = (_profileId, opts = {}) =>

@@ -49,6 +49,7 @@ import {
   listCandidateProfiles,
   createProfile,
   updateProfile,
+  deleteProfile,
   createIntroduction,
   getIntroduction,
   setIntroductionStatus,
@@ -434,6 +435,22 @@ app.patch('/api/profiles/:id', (req, res) => {
     }
     throw e;
   }
+});
+
+// --- profile deletion ---
+// DELETE /api/profiles/me — permanently removes the caller's own profile
+// and data. Identity comes only from the session token; there is no id
+// param, so a caller can only ever delete themselves. The token dies with
+// the profile row, and the session cookie is cleared on the way out.
+app.delete('/api/profiles/me', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const deleted = deleteProfile(profile.id);
+  if (!deleted) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Profile not found.');
+  const secure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.setHeader('Set-Cookie',
+    `${PROFILE_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`);
+  res.json({ deleted: true });
 });
 
 // --- discover (curated matches with qualitative reasons) ---

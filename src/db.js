@@ -449,6 +449,53 @@ if (userVersion < 10) {
   db.exec('PRAGMA user_version = 10');
 }
 
+// v11: profile deletion keeps introduction rows (marked withdrawn/ended)
+// while removing the member's profile row. The participant FKs become
+// nullable with ON DELETE SET NULL so the surviving participant still sees
+// the connection record instead of losing it. New introductions still always
+// carry both participants (enforced by request validation, not the schema).
+// SQLite cannot alter FK nullability in place, so the table is rebuilt.
+function migrateToV11() {
+  db.exec(`
+    CREATE TABLE introductions_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requester_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL,
+      proposed_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL,
+      intention TEXT NOT NULL,
+      note TEXT NOT NULL,
+      score REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'proposed',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      connection_type TEXT NOT NULL DEFAULT '',
+      request_message TEXT NOT NULL DEFAULT '',
+      format TEXT NOT NULL DEFAULT '',
+      commitment TEXT NOT NULL DEFAULT '',
+      tone TEXT NOT NULL DEFAULT '',
+      responder_note TEXT NOT NULL DEFAULT '',
+      response_kind TEXT NOT NULL DEFAULT '',
+      requester_shared_text TEXT NOT NULL DEFAULT ''
+    )
+  `);
+  db.exec(`
+    INSERT INTO introductions_new
+      (id, requester_id, proposed_id, intention, note, score, status,
+       created_at, updated_at, connection_type, request_message, format,
+       commitment, tone, responder_note, response_kind, requester_shared_text)
+    SELECT id, requester_id, proposed_id, intention, note, score, status,
+       created_at, updated_at, connection_type, request_message, format,
+       commitment, tone, responder_note, response_kind, requester_shared_text
+    FROM introductions
+  `);
+  db.exec('DROP TABLE introductions');
+  db.exec('ALTER TABLE introductions_new RENAME TO introductions');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_intros_pair ON introductions(requester_id, proposed_id)');
+}
+if (userVersion < 11) {
+  migrateToV11();
+  db.exec('PRAGMA user_version = 11');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -808,6 +855,90 @@ export function updateProfile(id, fields) {
   return getProfile(id);
 }
 
+/**
+ * Permanently delete a member's profile and all of their data, in a single
+ * transaction. Called only with the token-authenticated caller's own id.
+ *
+ * What happens to each table:
+ * - profiles: the row is removed. The session token hash lives on the row,
+ *   so the member's session ends the moment this lands.
+ * - introductions: never orphaned or deleted. Open ones ('proposed',
+ *   'question') become 'withdrawn'; active ones ('accepted',
+ *   'accepted_with_boundary') become 'ended' — the existing status
+ *   conventions, so the other participant still sees the connection record.
+ *   Terminal statuses ('declined', 'declined_hidden', 'withdrawn', 'ended')
+ *   are left alone. (v11: the participant FKs are ON DELETE SET NULL, so
+ *   the row survives with the survivor's side still queryable.)
+ * - circles: circles created by the member are deleted entirely (the
+ *   creator is who approves join requests, so a headless circle would
+ *   silently break). Memberships in other circles are removed.
+ * - agents: agent registrations where they are the operator are deleted.
+ *   (An agent is the operator's declaration about their own agent; it goes
+ *   with them.)
+ * - Reports/blocks/saved items/passes/messages/briefs/circle members and
+ *   requests: removed. Reports rely on their ON DELETE CASCADE FKs; the
+ *   rest are deleted explicitly for readability.
+ * - decline_blocks, guide_sessions, chat_sessions (no FK to profiles):
+ *   deleted explicitly. Profile-less onboarding chat sessions
+ *   (profile_id NULL) are untouched.
+ * Returns true when a profile row was actually removed.
+ */
+export function deleteProfile(id) {
+  const now = new Date().toISOString();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    // Close out introductions without orphaning them.
+    db.prepare(`
+      UPDATE introductions
+      SET status = 'withdrawn', updated_at = ?
+      WHERE (requester_id = ? OR proposed_id = ?)
+        AND status IN ('proposed', 'question')
+    `).run(now, id, id);
+    db.prepare(`
+      UPDATE introductions
+      SET status = 'ended', updated_at = ?
+      WHERE (requester_id = ? OR proposed_id = ?)
+        AND status IN ('accepted', 'accepted_with_boundary')
+    `).run(now, id, id);
+
+    // Circles created by this member are removed with them (created_by is
+    // NOT NULL with no cascade; remaining members' rows cascade with the
+    // circle). Their memberships in other circles go too.
+    db.prepare('DELETE FROM circles WHERE created_by = ?').run(id);
+    db.prepare('DELETE FROM circle_members WHERE profile_id = ?').run(id);
+    db.prepare('DELETE FROM circle_requests WHERE profile_id = ?').run(id);
+
+    // Agent registrations operated by this member.
+    db.prepare('DELETE FROM agents WHERE operator_profile_id = ?').run(id);
+
+    // Connection plans they authored.
+    db.prepare('DELETE FROM connection_plans WHERE created_by = ?').run(id);
+
+    // Tables with no FK reference to profiles.
+    db.prepare('DELETE FROM decline_blocks WHERE decliner_id = ? OR requester_id = ?').run(id, id);
+    db.prepare('DELETE FROM guide_sessions WHERE profile_id = ?').run(id);
+    db.prepare('DELETE FROM chat_sessions WHERE profile_id = ?').run(id);
+
+    // Tables with ON DELETE CASCADE FKs to profiles — explicit for clarity
+    // (the cascade is verified in tests/profile-deletion.test.js).
+    db.prepare('DELETE FROM blocks WHERE blocker_id = ? OR blocked_id = ?').run(id, id);
+    db.prepare('DELETE FROM reports WHERE reporter_id = ? OR reported_id = ?').run(id, id);
+    db.prepare('DELETE FROM saved_items WHERE profile_id = ?').run(id);
+    db.prepare('DELETE FROM passes WHERE profile_id = ? OR passed_id = ?').run(id, id);
+    db.prepare('DELETE FROM messages WHERE sender_id = ?').run(id);
+    db.prepare('DELETE FROM briefs WHERE profile_id = ?').run(id);
+
+    // The profile row itself. Guarded against the system sentinel (id 0),
+    // which no session token can ever resolve to.
+    const out = db.prepare('DELETE FROM profiles WHERE id = ? AND id <> 0').run(id);
+    db.exec('COMMIT');
+    return out.changes > 0;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
 /** Map legacy 3-boolean consents onto the richer settings (discovery toggle only). */
 function consentSettingsFromLegacy(consents, current) {
   const next = { ...current };
@@ -1108,8 +1239,8 @@ export function listDeclineBlocks(declinerId) {
 export function listIntroductionsFor(profileId) {  const rows = db.prepare(`
     SELECT i.*, rp.name AS requester_name, pp.name AS proposed_name
     FROM introductions i
-    JOIN profiles rp ON rp.id = i.requester_id
-    JOIN profiles pp ON pp.id = i.proposed_id
+    LEFT JOIN profiles rp ON rp.id = i.requester_id
+    LEFT JOIN profiles pp ON pp.id = i.proposed_id
     WHERE i.requester_id = ? OR i.proposed_id = ?
     ORDER BY i.id DESC
   `).all(profileId, profileId);

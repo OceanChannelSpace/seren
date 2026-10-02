@@ -3,7 +3,7 @@
 
 import { get, clearSession, metaList, practiceLabel, intentionLabel, formatLabel } from '../state.js';
 import {
-  getProfile, updateProfile, listBlocks, unblockProfile, friendlyError,
+  getProfile, updateProfile, deleteMyProfile, listBlocks, unblockProfile, friendlyError,
   getMyBrief, pauseBrief, resumeBrief, withdrawBrief,
 } from '../api.js';
 import { briefPill } from './brief.js';
@@ -311,6 +311,46 @@ export async function renderMe(root, ctx) {
     btnRow.appendChild(signOut);
     dangerCard.appendChild(btnRow);
     shell.body.appendChild(dangerCard);
+
+    // (g) Delete profile & data — two-step confirm, then local state is
+    // cleared and we route home. The DELETE returns 200 (not 401), so the
+    // api.js 401 handler never fires; this navigates exactly once.
+    const delCard = card([
+      el(`<h3 style="margin-top:0">Delete your data</h3>`),
+      el(`<p class="field-hint">Deleting removes your profile, connections, and messages from SEREN permanently. This cannot be undone.</p>`),
+    ]);
+    const delBtn = el(`<button type="button" class="btn btn-danger">Delete my profile and data</button>`);
+    delBtn.addEventListener('click', async () => {
+      const first = await confirmDialog({
+        title: 'Delete your profile and data?',
+        body: 'This permanently removes your profile, connections, and messages. This cannot be undone.',
+        confirmLabel: 'Continue',
+        danger: true,
+      });
+      if (!first) return;
+      const second = await confirmDialog({
+        title: 'Are you sure?',
+        body: 'Your SEREN profile and everything connected to it will be gone for good. You can always rejoin later with a fresh profile.',
+        confirmLabel: 'Delete everything',
+        danger: true,
+      });
+      if (!second) return;
+      delBtn.disabled = true;
+      try {
+        await deleteMyProfile();
+      } catch (e) {
+        delBtn.disabled = false;
+        toast(friendlyError(e));
+        return;
+      }
+      clearSession();
+      announce('Your profile has been deleted.');
+      navigate('#/welcome');
+    });
+    const delRow = el(`<div class="btn-row"></div>`);
+    delRow.appendChild(delBtn);
+    delCard.appendChild(delRow);
+    shell.body.appendChild(delCard);
 
     shell.body.appendChild(el(`<p class="footer-note">SEREN is a connection platform — not medical, mental-health, legal, or emergency support.</p>`));
     announce('Your profile and settings');
