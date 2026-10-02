@@ -50,6 +50,17 @@ function renderGate() {
   form.appendChild(submit);
   gateCard.appendChild(form);
 
+  // No code? Requests go straight to Jon's inbox.
+  const accessEmail = 'jon@oceanchannel.space';
+  const requestLink = el(`<a href="#">Request beta access</a>`);
+  requestLink.href = `mailto:${accessEmail}`
+    + `?subject=${encodeURIComponent('SEREN beta access request')}`
+    + `&body=${encodeURIComponent('Hi Jon,\n\nI would like to request access to the SEREN private beta.\n\nName:\nA little about me:\n\nThank you!')}`;
+  const request = el(`<p class="beta-request"></p>`);
+  request.append('Don’t have an invite code? ');
+  request.appendChild(requestLink);
+  gateCard.appendChild(request);
+
   wireSubmit(form, submit, async () => {
     banner.clear();
     const code = codeInput.value.trim();

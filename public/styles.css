@@ -597,6 +597,8 @@ a:hover { color: var(--ice); }
 .beta-gate h1 { margin-bottom: 0.5rem; }
 .beta-gate form { margin-top: 1.5rem; text-align: left; }
 .beta-gate #beta-submit { width: 100%; margin-top: 0.75rem; }
+.beta-request { margin-top: 1.25rem; font-size: 0.95rem; color: var(--mist); }
+.beta-request a { color: var(--seafoam); }
 
 /* While the beta gate is up, hide app chrome so the invite is the whole page. */
 body.beta-locked .site-header nav,
