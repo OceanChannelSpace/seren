@@ -1180,6 +1180,42 @@ export function createReport({ reporterId, reportedId, reason, details }) {
   return { id: Number(result.lastInsertRowid), status: 'open', createdAt: now };
 }
 
+// ---------- host moderation ----------
+
+export function listReports() {
+  return db.prepare(`
+    SELECT r.id, r.reporter_id AS reporterId, r.reported_id AS reportedId,
+           p1.name AS reporterName, p2.name AS reportedName,
+           r.reason, r.details, r.status, r.created_at AS createdAt
+    FROM reports r
+    LEFT JOIN profiles p1 ON p1.id = r.reporter_id
+    LEFT JOIN profiles p2 ON p2.id = r.reported_id
+    ORDER BY r.created_at DESC, r.id DESC
+  `).all();
+}
+
+export function getReport(id) {
+  const row = db.prepare('SELECT * FROM reports WHERE id = ?').get(id);
+  if (!row) return null;
+  return {
+    id: row.id,
+    reporterId: row.reporter_id,
+    reportedId: row.reported_id,
+    reason: row.reason,
+    details: row.details,
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+export function setReportStatus(id, status) {
+  db.prepare('UPDATE reports SET status = ? WHERE id = ?').run(status, id);
+}
+
+export function setProfileHidden(id, hidden) {
+  db.prepare('UPDATE profiles SET is_hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+}
+
 // ---------- guide sessions ----------
 
 function toGuideSession(row) {

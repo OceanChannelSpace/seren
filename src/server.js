@@ -67,6 +67,10 @@ import {
   removeBlock,
   listBlocks,
   createReport,
+  listReports,
+  getReport,
+  setReportStatus,
+  setProfileHidden,
   listMessages,
   createMessage,
   getConnectionPlan,
@@ -113,6 +117,16 @@ const BETA_CODE = (process.env.BETA_CODE || '').trim();
 const BETA_MODE = BETA_CODE.length > 0;
 const BETA_COOKIE = 'seren_beta';
 const betaTokens = new Set(); // issued tokens; cleared on restart (re-entry is cheap)
+
+// Host role: a minimal, env-configured list of member emails whose profiles
+// carry host (moderation) privileges. Token-bound identity still applies — a
+// host is the token-authenticated profile whose email is on this list.
+const SEREN_HOSTS = new Set(
+  (process.env.SEREN_HOSTS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+);
+function isHostEmail(email) {
+  return SEREN_HOSTS.has(String(email || '').trim().toLowerCase());
+}
 
 function sha256(s) {
   return createHash('sha256').update(s, 'utf8').digest();
@@ -274,6 +288,21 @@ function requireProfile(req, res) {
 }
 
 /**
+ * Guard for host-only actions: the caller must be token-authenticated AND
+ * their profile email must be on the SEREN_HOSTS list.
+ * Returns the profile or sends an error and returns null.
+ */
+function requireHost(req, res) {
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+  if (!isHostEmail(profile.email)) {
+    err(res, 403, ERROR_CODES.FORBIDDEN, 'Host access required.');
+    return null;
+  }
+  return profile;
+}
+
+/**
  * Guard for acting on an introduction: the caller must be a participant.
  * Returns the introduction or sends an error and returns null.
  */
@@ -313,6 +342,18 @@ app.get('/api/meta', (req, res) => {
     responseKinds: RESPONSE_KINDS,
     supportNote: BRAND.supportNote,
   });
+});
+
+// --- session ---
+
+// The caller's own session: full owner-view profile plus whether this
+// profile is a host. The host list itself is never exposed; non-hosts just
+// see isHost: false.
+app.get('/api/me', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const view = getVisibleProfile(profile.id, profile.id) || {};
+  res.json({ ...view, isHost: isHostEmail(profile.email) });
 });
 
 // --- profiles ---
@@ -1088,6 +1129,32 @@ app.post('/api/reports', (req, res) => {
     details: req.body.details || '',
   });
   res.status(201).json({ report });
+});
+
+// --- host moderation ---
+
+app.get('/api/reports', (req, res) => {
+  if (!requireHost(req, res)) return;
+  res.json({ reports: listReports() });
+});
+
+app.post('/api/reports/:id/dismiss', (req, res) => {
+  if (!requireHost(req, res)) return;
+  const id = parseId(req.params.id);
+  const report = id === null ? null : getReport(id);
+  if (!report) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Report not found.');
+  setReportStatus(id, 'dismissed');
+  res.json({ ok: true, status: 'dismissed' });
+});
+
+app.post('/api/reports/:id/hide-profile', (req, res) => {
+  if (!requireHost(req, res)) return;
+  const id = parseId(req.params.id);
+  const report = id === null ? null : getReport(id);
+  if (!report) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Report not found.');
+  setProfileHidden(report.reportedId, true);
+  setReportStatus(id, 'actioned');
+  res.json({ ok: true, status: 'actioned' });
 });
 
 // ---------- guide (AI-superconnector flow) ----------

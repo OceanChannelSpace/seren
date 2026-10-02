@@ -149,6 +149,16 @@ export const unblockProfile = (_profileId, blockedId) =>
 export const reportProfile = (payload) =>
   request('POST', '/api/reports', payload);
 
+// --- session & host moderation ---
+export const me = () =>
+  request('GET', '/api/me');
+export const listReports = () =>
+  request('GET', '/api/reports');
+export const dismissReport = (reportId) =>
+  request('POST', `/api/reports/${reportId}/dismiss`, {});
+export const hideReportedProfile = (reportId) =>
+  request('POST', `/api/reports/${reportId}/hide-profile`, {});
+
 // --- connection briefs ---
 export const createBriefFromSession = (sessionId) =>
   request('POST', '/api/briefs', { sessionId });

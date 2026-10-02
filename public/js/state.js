@@ -15,6 +15,7 @@ const state = {
   routeParams: {},
   brief: null,         // our latest connection brief (draft/active/paused/withdrawn)
   guideSessionId: null, // guide session that produced the current brief, for proposals
+  isHost: null,       // null = unknown, true/false once /api/me resolves
 };
 
 function getProfileId() {
@@ -26,7 +27,7 @@ function setProfileId(id) {
     if (id == null) localStorage.removeItem(`${STORAGE_PREFIX}.profileId`);
     else localStorage.setItem(`${STORAGE_PREFIX}.profileId`, String(id));
   } catch { /* private mode */ }
-  set({ profileId: id || null, profile: null });
+  set({ profileId: id || null, profile: null, isHost: null });
 }
 
 export function get(key) {

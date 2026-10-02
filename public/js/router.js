@@ -3,6 +3,7 @@
 
 import { get, set, initSession } from './state.js';
 import { announce } from './ui.js';
+import * as api from './api.js';
 
 const routes = new Map();
 const main = () => document.getElementById('main');
@@ -40,7 +41,11 @@ function buildNav() {
   const bottom = document.getElementById('bottom-nav');
   if (!list || !bottom) return;
   const profileId = get('profileId');
-  const items = profileId ? NAV_ITEMS : [];
+  const items = profileId ? [...NAV_ITEMS] : [];
+  // The moderation queue is visible only to hosts; the server enforces it too.
+  if (profileId && get('isHost') === true) {
+    items.push({ path: '#/moderation', label: 'Moderation', icon: '⚑' });
+  }
   list.innerHTML = items.map((i) =>
     `<li><a href="${i.path}" data-nav="${i.path}"><span class="nav-icon" aria-hidden="true">${i.icon}</span><span class="nav-label">${i.label}</span></a></li>`).join('');
   bottom.innerHTML = items.map((i) =>
@@ -90,6 +95,22 @@ async function handleRoute() {
   // Auth gate: member routes require a profile on this device.
   if (route.requiresProfile && !get('profileId')) {
     navigate('#/onboarding');
+    return;
+  }
+  // Resolve host status once per session so host-only nav/routes can gate.
+  if (get('profileId') && get('isHost') === null) {
+    try {
+      const session = await api.me();
+      set({ isHost: !!session.isHost, profile: session });
+    } catch {
+      // A 401 here already routes to welcome via the api 401 handler.
+      set({ isHost: false });
+    }
+    if (!get('profileId')) { navigate('#/welcome'); return; }
+  }
+  // Host gate: host-only routes (moderation) need the host flag.
+  if (route.requiresHost && get('isHost') !== true) {
+    navigate('#/');
     return;
   }
 

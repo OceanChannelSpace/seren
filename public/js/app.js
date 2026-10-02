@@ -17,6 +17,7 @@ import { renderMe, renderProfileEdit } from './views/me.js';
 import { renderSaved } from './views/saved.js';
 import { renderBrief } from './views/brief.js';
 import { renderAgents } from './views/agents.js';
+import { renderModeration } from './views/moderation.js';
 
 async function boot() {
   // Beta gate state.
@@ -58,6 +59,7 @@ async function boot() {
   addRoute('/me/edit', renderProfileEdit, { title: 'Edit profile', requiresBeta: true, requiresProfile: true });
   addRoute('/saved', renderSaved, { title: 'Saved', requiresBeta: true, requiresProfile: true });
   addRoute('/agents', renderAgents, { title: 'Intelligent agents', requiresBeta: true, requiresProfile: true });
+  addRoute('/moderation', renderModeration, { title: 'Moderation', requiresBeta: true, requiresProfile: true, requiresHost: true });
   addRoute('*', renderWelcome, { title: 'Welcome to SEREN' });
 
   startRouter();
