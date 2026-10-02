@@ -6,6 +6,8 @@
 // v1: profile extensions, staged-consent columns on introductions, and new
 //     tables: circles, circle_members, circle_requests, blocks, reports,
 //     saved_items, passes, messages, connection_plans.
+// v12: host_assists (Human Mode) + partial unique index for one open
+//      request per member.
 
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -494,6 +496,34 @@ function migrateToV11() {
 if (userVersion < 11) {
   migrateToV11();
   db.exec('PRAGMA user_version = 11');
+}
+
+// v12: host assist requests (Human Mode). A member may ask a real SEREN host
+// to thoughtfully suggest someone for them — the introduction itself still
+// flows through the normal staged mutual-consent machinery. One open request
+// per member at a time: enforced with a partial UNIQUE index on (profile_id)
+// WHERE status = 'open'. The index (not just handler code) is the enforcer,
+// so concurrent creates cannot double-open; the handler also checks first and
+// maps the UNIQUE violation to a friendly 409.
+function migrateToV12() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS host_assists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      request_text TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'proposed', 'withdrawn')),
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_host_assists_open
+    ON host_assists(profile_id) WHERE status = 'open'
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_host_assists_profile ON host_assists(profile_id)');
+}
+if (userVersion < 12) {
+  migrateToV12();
+  db.exec('PRAGMA user_version = 12');
 }
 
 // ---------- defaults ----------
@@ -1345,6 +1375,67 @@ export function setReportStatus(id, status) {
 
 export function setProfileHidden(id, hidden) {
   db.prepare('UPDATE profiles SET is_hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+}
+
+// ---------- host assists (Human Mode) ----------
+// A member asks a real host to suggest a connection; the host's proposal
+// creates an introduction through the normal staged-consent flow. Deleting
+// a profile removes its assist requests via the ON DELETE CASCADE FK.
+
+function toHostAssist(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    profileId: row.profile_id,
+    askerName: row.asker_name || '',
+    requestText: row.request_text || '',
+    status: row.status,
+    createdAt: row.created_at,
+  };
+}
+
+const getHostAssistStmt = db.prepare('SELECT * FROM host_assists WHERE id = ?');
+export function getHostAssist(id) {
+  return toHostAssist(getHostAssistStmt.get(id));
+}
+
+/** The member's single open assist request, or null. */
+export function getOpenHostAssist(profileId) {
+  return toHostAssist(db.prepare(
+    'SELECT * FROM host_assists WHERE profile_id = ? AND status = \'open\' LIMIT 1',
+  ).get(profileId));
+}
+
+export function createHostAssist({ profileId, requestText }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO host_assists (profile_id, request_text, status, created_at)
+    VALUES (?, ?, 'open', ?)
+  `).run(profileId, requestText.trim(), now);
+  return getHostAssist(Number(result.lastInsertRowid));
+}
+
+/** All of one member's requests, newest first (for their own view). */
+export function listHostAssistsFor(profileId) {
+  return db.prepare('SELECT * FROM host_assists WHERE profile_id = ? ORDER BY id DESC')
+    .all(profileId).map(toHostAssist);
+}
+
+/** Every open request, oldest first, with the asker's name (host queue). */
+export function listOpenHostAssists() {
+  return db.prepare(`
+    SELECT h.*, p.name AS asker_name
+    FROM host_assists h
+    JOIN profiles p ON p.id = h.profile_id
+    WHERE h.status = 'open'
+    ORDER BY h.created_at ASC, h.id ASC
+  `).all().map(toHostAssist);
+}
+
+/** Transition an assist: 'open' -> 'proposed' (host) or 'withdrawn' (asker). */
+export function setHostAssistStatus(id, status) {
+  db.prepare('UPDATE host_assists SET status = ? WHERE id = ?').run(status, id);
+  return getHostAssist(id);
 }
 
 // ---------- guide sessions ----------

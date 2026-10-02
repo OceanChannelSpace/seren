@@ -164,6 +164,20 @@ export const dismissReport = (reportId) =>
 export const hideReportedProfile = (reportId) =>
   request('POST', `/api/reports/${reportId}/hide-profile`, {});
 
+// --- host assists (Human Mode: host-facilitated introductions) ---
+export const createHostAssist = (payload) =>
+  request('POST', '/api/host-assists', payload);
+export const listMyHostAssists = () =>
+  request('GET', '/api/host-assists/mine');
+export const withdrawHostAssist = (id) =>
+  request('POST', `/api/host-assists/mine/${id}/withdraw`, {});
+/** Host queue: every open assist request with the asker's name. */
+export const listHostAssists = () =>
+  request('GET', '/api/host-assists');
+/** Host proposes a member for a request: { suggestedId, hostNote? }. */
+export const proposeHostAssist = (id, payload) =>
+  request('POST', `/api/host-assists/${id}/propose`, payload);
+
 // --- connection briefs ---
 export const createBriefFromSession = (sessionId) =>
   request('POST', '/api/briefs', { sessionId });

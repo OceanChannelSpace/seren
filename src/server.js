@@ -20,6 +20,7 @@ import {
   validateBriefDraft, validateBriefUpdate, validateBriefApprove,
   validateChatStart, validateChatMessage, validateRelink,
   validateOnboardingStart, validateOnboardingMessage, validateAgentInput,
+  validateHostAssistInput, validateHostAssistProposal,
 } from './validate.js';
 import {
   startOnboarding, handleOnboardingTurn, questionForStage,
@@ -72,6 +73,12 @@ import {
   getReport,
   setReportStatus,
   setProfileHidden,
+  getHostAssist,
+  getOpenHostAssist,
+  createHostAssist,
+  listHostAssistsFor,
+  listOpenHostAssists,
+  setHostAssistStatus,
   listMessages,
   createMessage,
   getConnectionPlan,
@@ -228,6 +235,20 @@ function toWireIntroduction(intro) {
     createdAt: intro.createdAt,
     updatedAt: intro.updatedAt,
   };
+}
+
+// The db helper already returns camelCase; the host queue adds askerName.
+function toWireHostAssist(assist) {
+  if (!assist) return null;
+  const wire = {
+    id: assist.id,
+    profileId: assist.profileId,
+    requestText: assist.requestText,
+    status: assist.status,
+    createdAt: assist.createdAt,
+  };
+  if (assist.askerName) wire.askerName = assist.askerName;
+  return wire;
 }
 
 // ---------- profile session tokens ----------
@@ -1172,6 +1193,151 @@ app.post('/api/reports/:id/hide-profile', (req, res) => {
   setProfileHidden(report.reportedId, true);
   setReportStatus(id, 'actioned');
   res.json({ ok: true, status: 'actioned' });
+});
+
+// --- host assists (Human Mode: host-facilitated introductions) ---
+// A member asks a real person (a SEREN host) to thoughtfully suggest someone
+// for them. The host's proposal creates an introduction through the SAME
+// staged mutual-consent machinery as intentional requests: both people still
+// choose. The host never sees algorithmic match output, and nothing here
+// implies certainty about the suggestion.
+
+app.post('/api/host-assists', (req, res) => {
+  const { ok, errors } = validateHostAssistInput(req.body);
+  if (!ok) return validationErr(res, errors);
+  // The asker is always the token-authenticated caller.
+  const asker = requireProfile(req, res);
+  if (!asker) return;
+  if (!asker.consents || asker.consents.introductions !== true) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'This profile has not opted into introductions.');
+  }
+  // One open request per member at a time. The partial unique index is the
+  // real enforcer (races included); the pre-check gives the friendly 409.
+  if (getOpenHostAssist(asker.id)) {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'You already have an open request. Withdraw it before asking again.');
+  }
+  try {
+    const assist = createHostAssist({ profileId: asker.id, requestText: req.body.requestText });
+    return res.status(201).json({ assist: toWireHostAssist(assist) });
+  } catch (e) {
+    if (String(e && e.message).includes('UNIQUE')) {
+      return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+        'You already have an open request. Withdraw it before asking again.');
+    }
+    throw e;
+  }
+});
+
+app.get('/api/host-assists/mine', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  res.json({ assists: listHostAssistsFor(profile.id).map(toWireHostAssist) });
+});
+
+app.post('/api/host-assists/mine/:id/withdraw', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const id = parseId(req.params.id);
+  const assist = id === null ? null : getHostAssist(id);
+  // Not found covers "someone else's request" too — withdrawing is the
+  // asker's choice alone, and other members' request ids stay private.
+  if (!assist || assist.profileId !== profile.id) {
+    return err(res, 404, ERROR_CODES.NOT_FOUND, 'Request not found.');
+  }
+  if (assist.status !== 'open') {
+    return err(res, 409, ERROR_CODES.INVALID_TRANSITION,
+      `A request with status "${assist.status}" cannot be withdrawn.`);
+  }
+  res.json({ assist: toWireHostAssist(setHostAssistStatus(id, 'withdrawn')) });
+});
+
+app.get('/api/host-assists', (req, res) => {
+  if (!requireHost(req, res)) return;
+  res.json({ assists: listOpenHostAssists().map(toWireHostAssist) });
+});
+
+app.post('/api/host-assists/:id/propose', (req, res) => {
+  if (!requireHost(req, res)) return;
+  const { ok, errors } = validateHostAssistProposal(req.body);
+  if (!ok) return validationErr(res, errors);
+
+  const id = parseId(req.params.id);
+  const assist = id === null ? null : getHostAssist(id);
+  if (!assist) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Assist request not found.');
+  if (assist.status !== 'open') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      `This request is no longer open (status: "${assist.status}").`);
+  }
+
+  const asker = getProfile(assist.profileId);
+  if (!asker) return err(res, 404, ERROR_CODES.NOT_FOUND, 'The requesting member was not found.');
+  if (!asker.consents || asker.consents.introductions !== true) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'The requesting member has not opted into introductions.');
+  }
+  if (asker.consentSettings && asker.consentSettings.paused) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'The requesting member has paused discovery.');
+  }
+
+  // The same eligibility guards as POST /api/connections/request.
+  const suggested = getProfile(Number(req.body.suggestedId));
+  if (!suggested) return err(res, 404, ERROR_CODES.NOT_FOUND, 'The suggested member was not found.');
+  if (suggested.id === asker.id) {
+    return validationErr(res, [{ field: 'suggestedId', message: 'the suggested member must be someone else' }]);
+  }
+  if (isBlockedBetween(asker.id, suggested.id)) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN, 'These members cannot connect.');
+  }
+  if (suggested.consentSettings && (suggested.consentSettings.paused || suggested.consentSettings.discoveryEnabled === false)) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'The suggested member is not open to new connection requests right now.');
+  }
+  if (suggested.consentSettings && suggested.consentSettings.intentionalRequests === false) {
+    return err(res, 403, ERROR_CODES.CONSENT_REQUIRED,
+      'The suggested member is not open to intentional requests right now.');
+  }
+  // A prior decline is durable: the suggested member chose not to receive
+  // further direct requests from this asker. Same neutral 403 as the
+  // intentional-request path.
+  if (hasDeclineBlock(suggested.id, asker.id)) {
+    return err(res, 403, ERROR_CODES.DECLINED_PREVIOUSLY,
+      'This person is not available for new requests right now.');
+  }
+  const existingPair = db.prepare(`
+    SELECT 1 FROM introductions
+    WHERE status NOT IN ('withdrawn', 'declined', 'declined_hidden', 'ended')
+      AND ((requester_id = ? AND proposed_id = ?) OR (requester_id = ? AND proposed_id = ?))
+    LIMIT 1
+  `).get(asker.id, suggested.id, suggested.id, asker.id);
+  if (existingPair) {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'There is already an active connection request between these members.');
+  }
+
+  // The host's proposal enters the normal staged mutual-consent flow: the
+  // suggested member responds (accept / question / decline) like any other
+  // request. The note is honest about provenance: a person suggested this.
+  const hostNote = String(req.body.hostNote || '').trim();
+  const note = [
+    `${asker.name} asked a person, not an algorithm, to help them find a meaningful connection. A SEREN host read their request and thought of you. Both of you still choose.`,
+    hostNote ? `Host note: ${hostNote}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  const intro = createIntroduction({
+    requesterId: asker.id,
+    proposedId: suggested.id,
+    intention: 'A SEREN host thought you two might connect',
+    note,
+    score: 0,
+  });
+  const updated = setHostAssistStatus(id, 'proposed');
+  return res.status(201).json({
+    assist: toWireHostAssist(updated),
+    introduction: toWireIntroduction(intro),
+  });
 });
 
 // ---------- guide (AI-superconnector flow) ----------

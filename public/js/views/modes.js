@@ -1,4 +1,4 @@
-// Modes — seven calm ways to begin, each leading somewhere concrete.
+// Modes — eight calm ways to begin, each leading somewhere concrete.
 
 import { get, metaList, practiceLabel } from '../state.js';
 import * as api from '../api.js';
@@ -25,7 +25,7 @@ function actionButton(label, onClick, secondary = false) {
 
 export async function renderModes(root, ctx) {
   const profileId = get('profileId');
-  const { root: shell, body } = pageShell('Ways to begin', 'Seven modes');
+  const { root: shell, body } = pageShell('Ways to begin', 'Eight modes');
   root.appendChild(shell);
   const banner = errorBanner();
   body.appendChild(banner.node);
@@ -145,4 +145,80 @@ export async function renderModes(root, ctx) {
   const m7 = modeCard('✧', 'Saved & returning', 'People and topics you saved for later. Return when the time feels right.');
   m7.appendChild(actionButton('View saved', () => navigate('#/saved'), true));
   grid.appendChild(m7);
+
+  // 8 — Human connector: a real host reads the request and suggests someone.
+  const m8 = modeCard('☺', 'Human connector', 'Ask a person, not an algorithm, to help.');
+  const hc = el(`<div style="margin-top:0.9rem"></div>`);
+  m8.appendChild(hc);
+  grid.appendChild(m8);
+  await renderHumanConnector(hc, banner);
+}
+
+/** The Human connector card body: request form, or the open request + withdraw. */
+async function renderHumanConnector(hc, banner) {
+  hc.innerHTML = '';
+  hc.appendChild(loading('Checking your requests…'));
+  let assists = [];
+  try {
+    const res = await api.listMyHostAssists();
+    assists = res.assists || [];
+  } catch (e) {
+    hc.innerHTML = '';
+    hc.appendChild(el(`<p class="field-hint">Could not load your request status. Please try again later.</p>`));
+    return;
+  }
+  hc.innerHTML = '';
+
+  const open = assists.find((a) => a.status === 'open');
+  if (open) {
+    hc.appendChild(el(`<p style="margin:0 0 0.6rem;font-size:0.92rem;color:var(--mist)">Your request is with a host. They will read it and, if someone thoughtful comes to mind, suggest an introduction. Both people still choose whether to connect.</p>`));
+    hc.appendChild(el(`<div style="border-left:3px solid var(--mist-dim);padding:0.25rem 0.8rem;margin-bottom:0.9rem;font-size:0.92rem">${esc(open.requestText)}</div>`));
+    const withdrawBtn = actionButton('Withdraw request', async () => {
+      const ok = await confirmDialog({
+        title: 'Withdraw your request?',
+        body: 'The host will no longer see your request. You can ask again any time.',
+        confirmLabel: 'Withdraw request',
+      });
+      if (!ok) return;
+      withdrawBtn.disabled = true;
+      try {
+        await api.withdrawHostAssist(open.id);
+        toast('Request withdrawn.');
+        announce('Request withdrawn.');
+        await renderHumanConnector(hc, banner);
+      } catch (e) {
+        banner.show(api.friendlyError(e));
+      } finally {
+        withdrawBtn.disabled = false;
+      }
+    }, true);
+    hc.appendChild(withdrawBtn);
+    return;
+  }
+
+  hc.appendChild(el(`<p style="margin:0 0 0.6rem;font-size:0.92rem;color:var(--mist)">Write what kind of connection would feel meaningful right now, and a few words on why. A real host reads your request and suggests someone if a good fit comes to mind. No algorithms, no promises. Both people still choose.</p>`));
+  const ta = el(`<textarea class="input" rows="4" maxlength="1000" style="width:100%" placeholder="What kind of connection would feel meaningful right now, and why?"></textarea>`);
+  ta.setAttribute('aria-label', 'What kind of connection would feel meaningful right now, and why?');
+  hc.appendChild(ta);
+  hc.appendChild(el(`<p class="field-hint" style="margin:0.35rem 0 0.75rem">Up to 1000 characters. A person reads this, not software.</p>`));
+  const sendBtn = actionButton('Ask a host', async () => {
+    const text = ta.value.trim();
+    if (!text) {
+      banner.show('Please write a little about what kind of connection you are hoping for.');
+      ta.focus();
+      return;
+    }
+    sendBtn.disabled = true;
+    try {
+      await api.createHostAssist({ requestText: text });
+      toast('Your request is with a host. Take your time.');
+      announce('Request sent to a host.');
+      await renderHumanConnector(hc, banner);
+    } catch (e) {
+      banner.show(api.friendlyError(e));
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+  hc.appendChild(sendBtn);
 }

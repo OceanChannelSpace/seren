@@ -639,6 +639,35 @@ export function validateReportInput(body) {
   return { ok: errors.length === 0, errors };
 }
 
+/* ------------------------------------------------------------------ */
+/* Host assists (Human Mode): a member asks a real host for help.      */
+/* ------------------------------------------------------------------ */
+
+/** Member request: {requestText} — required, max 1000 chars. */
+export function validateHostAssistInput(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkShortText(errors, body.requestText, 'requestText', { required: true, max: 1000 });
+  return { ok: errors.length === 0, errors };
+}
+
+/** Host proposal: {suggestedId, hostNote?} — optional host note, max 500. */
+export function validateHostAssistProposal(body) {
+  const errors = [];
+  if (!isPlainObject(body)) {
+    push(errors, 'body', 'request body must be a JSON object');
+    return { ok: false, errors };
+  }
+  checkId(errors, body, 'suggestedId');
+  if (body.hostNote !== undefined && body.hostNote !== null && body.hostNote !== '') {
+    checkShortText(errors, body.hostNote, 'hostNote', { max: 500 });
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 /** First-connection plan: {createdBy, format?, timeText?, expectations?} */
 export function validatePlanInput(body) {
   const errors = [];
