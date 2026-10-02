@@ -594,6 +594,34 @@ if (userVersion < 14) {
   db.exec('PRAGMA user_version = 14');
 }
 
+// v15: re-run the v5 QA/test hide sweep for profiles created after v5 ran.
+// v5 was one-time, so test records created later (e.g. "QA Tester") stayed
+// visible in matching. Same patterns, same audit logging. Matching is real
+// people only; demo seed members are excluded separately in
+// listCandidateProfiles().
+function migrateToV15() {
+  const hidden = db.prepare(`
+    UPDATE profiles
+    SET is_hidden = 1
+    WHERE id > 0 AND is_hidden = 0 AND (
+      ((' ' || lower(name) || ' ') LIKE '% qa %')
+      OR ((' ' || lower(name) || ' ') LIKE '% test %')
+      OR lower(email) LIKE '%qa@%'
+      OR lower(intention) LIKE '%qa test%'
+    )
+  `).run();
+  if (hidden.changes > 0) {
+    const names = db.prepare(`
+      SELECT name FROM profiles WHERE is_hidden = 1 AND id > 0
+    `).all().map((r) => r.name);
+    console.log(`[migrate] v15: hid ${hidden.changes} QA/test profile(s): ${names.join(', ')}`);
+  }
+}
+if (userVersion < 15) {
+  migrateToV15();
+  db.exec('PRAGMA user_version = 15');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -837,9 +865,12 @@ export function listPublicProfiles() {
   });
 }
 
-/** Full profiles, for matching candidates (includes consents + intention). Hidden QA/test records excluded. */
+/** Full profiles, for matching candidates (includes consents + intention).
+ *  Hidden QA/test records excluded. Demo seed members (is_seed = 1) are also
+ *  excluded: matching is real people only — seeds are never suggested,
+ *  proposed, or discovered as candidates. */
 export function listCandidateProfiles() {
-  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 AND is_hidden = 0 ORDER BY id ASC').all();
+  const rows = db.prepare('SELECT * FROM profiles WHERE id > 0 AND is_hidden = 0 AND is_seed = 0 ORDER BY id ASC').all();
   return rows.map(toProfile);
 }
 
