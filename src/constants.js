@@ -334,6 +334,11 @@ export const RESPONSE_LABELS = Object.freeze({
 
 export const REPORT_REASONS = Object.freeze([
   'spam', 'harassment', 'inappropriate-content', 'dishonest-profile', 'safety-concern', 'other',
+  // v16 ("Flourishing by Design"): finer-grained safety categories so hosts
+  // can triage and the analytics can distinguish incident types. Additive —
+  // all prior categories keep working.
+  'unwanted_contact', 'manipulative_spiritual_claims', 'coercion',
+  'exploitation', 'unsafe_event', 'harmful_ai_output',
 ]);
 export const REPORT_REASON_LABELS = Object.freeze({
   'spam': 'Spam or solicitation',
@@ -342,6 +347,12 @@ export const REPORT_REASON_LABELS = Object.freeze({
   'dishonest-profile': 'Dishonest or misleading profile',
   'safety-concern': 'Safety concern',
   'other': 'Something else',
+  'unwanted_contact': 'Unwanted contact',
+  'manipulative_spiritual_claims': 'Manipulative spiritual claims',
+  'coercion': 'Coercion',
+  'exploitation': 'Exploitation',
+  'unsafe_event': 'Unsafe event',
+  'harmful_ai_output': 'Harmful AI output',
 });
 
 // Synchronicity Mode (v13): beacon sources and intention types.
@@ -399,5 +410,6 @@ export const ERROR_CODES = Object.freeze({
   UNAUTHORIZED: 'unauthorized',
   FORBIDDEN: 'forbidden',
   CONFLICT_STATE: 'conflict_state',
+  ALREADY_SUBMITTED: 'already_submitted',
   DECLINED_PREVIOUSLY: 'declined_previously',
 });

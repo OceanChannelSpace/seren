@@ -1,9 +1,12 @@
 // SEREN chat — pure conversation helpers for the guide chat interface.
 //
 // No DB, no express, no network: building bot messages and classifying
-// user replies. Tone contract: warm and grounded; never supernatural
+// user replies. Tone contract: GUIDE_BEHAVIOR_RULES (src/guide.js) —
+// agency-first, epistemically humble, warm and grounded; never supernatural
 // certainty, never clinical/therapy/medical claims, never claims to be
-// human. Every bot text is <= 400 characters.
+// human, never the banned phrasings ("you must", "you are destined",
+// "your energy proves", "i have detected", "soulmate", past lives as
+// fact, diagnosing). Every bot text is <= 400 characters.
 
 /** Starter chips shown when a new conversation begins. */
 export const STARTERS = Object.freeze([
@@ -44,6 +47,8 @@ function firstNameOf(profile) {
 
 /**
  * Opening messages for a brand-new guide conversation.
+ * Written to GUIDE_BEHAVIOR_RULES: honest labeling (a rule-based helper,
+ * never a person, never an oracle), agency-first, consent-first.
  * @returns {Array} two bot messages
  */
 export function greetingMessages(profile) {
@@ -52,7 +57,7 @@ export function greetingMessages(profile) {
     {
       role: 'bot',
       kind: 'text',
-      text: `Hello ${firstName} ✦ I'm the SEREN guide. I ask a few thoughtful questions and draft a connection brief for your review. Nothing is shared with anyone until you approve it.`,
+      text: `Hello ${firstName} ✦ I'm the SEREN guide — a simple rule-based helper, not a person and not an oracle. I'll ask a few thoughtful questions and draft a connection brief for your review. You are the best authority on your own experience; nothing is shared with anyone until you approve it.`,
     },
     {
       role: 'bot',
@@ -116,10 +121,12 @@ export const NO_SUGGESTIONS_TEXT =
 /**
  * Intro text for the proposals stage. Pure function of whether any
  * suggestion cards exist: never point at cards above when there are none.
+ * Agency-first and low-claim: possibilities, not predictions — the member
+ * decides what fits.
  */
 export function proposalsStageText(hasSuggestions) {
   if (hasSuggestions) {
-    return 'Your suggestions are just above. Tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.';
+    return 'These are gentle possibilities, not predictions — you decide what fits. Your suggestions are just above: tap "Request introduction" on any card that feels aligned, or "Not now" to set it aside. I can also start a new brief whenever you like.';
   }
   return `${NO_SUGGESTIONS_TEXT} I can also start a new brief whenever you like.`;
 }

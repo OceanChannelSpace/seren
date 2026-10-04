@@ -16,6 +16,9 @@ import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
 import { INTRO_STATUS, AGENT_VETTING_KEYS } from './constants.js';
+// v16 (Flourishing): reflective framing appended to synchronicity
+// introduction notes — copy-only, no behavior change.
+import { REFLECTIVE_FRAMING } from './sync-deck.js';
 
 const DB_PATH = resolve(process.env.DB_PATH || './data/seren.db');
 mkdirSync(dirname(DB_PATH), { recursive: true });
@@ -622,6 +625,52 @@ if (userVersion < 15) {
   db.exec('PRAGMA user_version = 15');
 }
 
+// v16: "Flourishing by Design" — outcome tracking, not engagement.
+// flourishing_checkins: one row per answered question per check-in (all rows
+// in a submission share one created_at). question_key values are fixed in
+// server.js (FLOURISHING_QUESTIONS); answers are normalized text.
+// introduction_feedback: one feedback row per participant per introduction
+// (unique index is the race-proof enforcer for the one-feedback rule).
+// introductions gains real-life intention fields: a member-declared offline
+// action plus a completion flag (never a claim about outcomes, just intent).
+// reports gains updated_at so host safety analytics can measure resolution
+// latency (created -> status change); backfilled to created_at on upgrade.
+function migrateToV16() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS flourishing_checkins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      question_key TEXT NOT NULL,
+      answer_text TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_flourishing_checkins_profile ON flourishing_checkins(profile_id)');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS introduction_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      introduction_id INTEGER NOT NULL REFERENCES introductions(id) ON DELETE CASCADE,
+      profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      felt_safe INTEGER NOT NULL CHECK(felt_safe IN (0, 1)),
+      quality INTEGER CHECK(quality IS NULL OR (quality >= 1 AND quality <= 5)),
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_introduction_feedback_intro_profile
+    ON introduction_feedback(introduction_id, profile_id)
+  `);
+  addColumnIfMissing('introductions', 'real_life_intention', `TEXT NOT NULL DEFAULT ''`);
+  addColumnIfMissing('introductions', 'intention_completed', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('reports', 'updated_at', `TEXT NOT NULL DEFAULT ''`);
+  db.prepare(`UPDATE reports SET updated_at = created_at WHERE updated_at = ''`).run();
+}
+if (userVersion < 16) {
+  migrateToV16();
+  db.exec('PRAGMA user_version = 16');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -654,6 +703,10 @@ export function defaultConsentSettings(legacy = {}) {
     // off, the member's needs are not used for matching in either direction
     // (human or agent matching).
     needsMatching: true,
+    // v16: "Flourishing by Design" — suggestion cadence consent. Default
+    // weekly: the member is not notified more often than once a week unless
+    // they opt into daily; paused stops suggestions entirely.
+    recFrequency: 'weekly',
   };
 }
 
@@ -723,6 +776,10 @@ function toIntroduction(row) {
     responderNote: row.responder_note || '',
     responseKind: row.response_kind || '',
     requesterSharedText: row.requester_shared_text || '',
+    // v16: real-life intention — a member-declared offline action (intent,
+    // never an outcome claim) plus whether they marked it done.
+    realLifeIntention: row.real_life_intention || '',
+    intentionCompleted: row.intention_completed === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -903,7 +960,12 @@ export function createProfile({
     String(email).trim().toLowerCase(),
     JSON.stringify(interests),
     intention.trim(),
-    JSON.stringify({ seeking: connectionPrefs?.seeking ?? [], availability: connectionPrefs?.availability ?? '' }),
+    // v16 (Flourishing): persist the whole connectionPrefs object — seeking
+    // and availability keep their defaults, and the onboarding keys
+    // (intentions, connectionLevels, topicsOut, privacyLevel,
+    // locationRadius, onlineMode, commBoundaries, syncMode) ride along
+    // instead of being dropped.
+    JSON.stringify({ seeking: [], availability: '', ...(connectionPrefs || {}) }),
     JSON.stringify(consents),
     isSeed ? 1 : 0,
     String(pronouns || '').trim(),
@@ -942,10 +1004,10 @@ export function updateProfile(id, fields) {
   if (fields.intention !== undefined) { sets.push('intention = ?'); params.push(str(fields.intention)); }
   if (fields.connectionPrefs !== undefined) {
     const prev = existing.connectionPrefs || {};
-    const next = {
-      seeking: fields.connectionPrefs.seeking ?? prev.seeking ?? [],
-      availability: fields.connectionPrefs.availability ?? prev.availability ?? '',
-    };
+    // v16 (Flourishing): merge rather than picking two keys, so PATCHing
+    // one connection preference never drops the others (e.g. onboarding
+    // keys like privacyLevel or connectionLevels).
+    const next = { seeking: [], availability: '', ...prev, ...fields.connectionPrefs };
     sets.push('connection_prefs = ?'); params.push(JSON.stringify(next));
     // Mirror availability into prefs for the new model.
     const prefsNext = { ...existing.prefs, availability: next.availability, seeking: next.seeking };
@@ -1497,11 +1559,145 @@ export function getReport(id) {
 }
 
 export function setReportStatus(id, status) {
-  db.prepare('UPDATE reports SET status = ? WHERE id = ?').run(status, id);
+  // v16: updated_at marks the moment the status moved, so host safety
+  // analytics can measure resolution latency (created -> resolved).
+  db.prepare('UPDATE reports SET status = ?, updated_at = ? WHERE id = ?')
+    .run(status, new Date().toISOString(), id);
 }
 
 export function setProfileHidden(id, hidden) {
   db.prepare('UPDATE profiles SET is_hidden = ? WHERE id = ?').run(hidden ? 1 : 0, id);
+}
+
+// ---------- flourishing by design (v16) ----------
+// Outcome tracking: weekly check-ins, per-introduction feedback, and
+// real-life intentions. No engagement metrics (no DAU, session time,
+// message volume, streaks) — the host analytics below deliberately measure
+// member-reported outcomes only.
+
+/**
+ * Record a check-in submission: one row per answered question. All rows in
+ * the batch share one created_at. Answers are already normalized text.
+ * @returns {{ids: number[], createdAt: string}}
+ */
+export function createFlourishingCheckins(profileId, responses) {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(`
+    INSERT INTO flourishing_checkins (profile_id, question_key, answer_text, created_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  // node:sqlite is synchronous; a plain loop is atomic enough here (one
+  // statement per answer, no interleaving within a single tick).
+  const ids = responses.map((r) =>
+    Number(stmt.run(profileId, r.questionKey, r.answer, now).lastInsertRowid));
+  return { ids, createdAt: now };
+}
+
+/** The caller's own check-in answers, newest first. */
+export function listFlourishingCheckins(profileId) {
+  return db.prepare(`
+    SELECT id,
+           question_key AS questionKey,
+           answer_text AS answer,
+           created_at AS createdAt
+    FROM flourishing_checkins
+    WHERE profile_id = ?
+    ORDER BY id DESC
+  `).all(profileId);
+}
+
+function toFeedback(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    introductionId: row.introduction_id,
+    profileId: row.profile_id,
+    feltSafe: row.felt_safe === 1,
+    quality: row.quality,
+    notes: row.notes || '',
+    createdAt: row.created_at,
+  };
+}
+
+/** Feedback this profile already left on the introduction, or null. */
+export function getIntroductionFeedback(introductionId, profileId) {
+  return toFeedback(db.prepare(`
+    SELECT * FROM introduction_feedback
+    WHERE introduction_id = ? AND profile_id = ?
+  `).get(introductionId, profileId));
+}
+
+/** Leave feedback. The unique index is the race-proof one-feedback enforcer. */
+export function createIntroductionFeedback({ introductionId, profileId, feltSafe, quality, notes }) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO introduction_feedback
+      (introduction_id, profile_id, felt_safe, quality, notes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(introductionId, profileId, feltSafe ? 1 : 0, quality ?? null, (notes || '').trim(), now);
+  return toFeedback(db.prepare('SELECT * FROM introduction_feedback WHERE id = ?')
+    .get(Number(result.lastInsertRowid)));
+}
+
+/** Set the real-life intention text (a declared intent, not an outcome). */
+export function setIntroductionRealLifeIntention(id, intention) {
+  db.prepare(`
+    UPDATE introductions SET real_life_intention = ?, updated_at = ? WHERE id = ?
+  `).run(intention, new Date().toISOString(), id);
+  return getIntroduction(id);
+}
+
+/** Mark the real-life intention complete. */
+export function completeIntroductionRealLifeIntention(id) {
+  db.prepare(`
+    UPDATE introductions SET intention_completed = 1, updated_at = ? WHERE id = ?
+  `).run(new Date().toISOString(), id);
+  return getIntroduction(id);
+}
+
+/**
+ * Raw aggregates for the host analytics view. All check-in metrics use a
+ * trailing-30-day window; introduction feedback aggregates all feedback on
+ * record (n is small and quality answers stay relevant).
+ * @returns aggregate rows; the caller shapes percentages.
+ */
+export function getFlourishingAggregates() {
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const yesByKey = db.prepare(`
+    SELECT question_key AS questionKey, COUNT(DISTINCT profile_id) AS yesN
+    FROM flourishing_checkins
+    WHERE created_at >= ? AND answer_text = 'yes'
+    GROUP BY question_key
+  `).all(since);
+  const answeredByKey = db.prepare(`
+    SELECT question_key AS questionKey, COUNT(DISTINCT profile_id) AS n
+    FROM flourishing_checkins
+    WHERE created_at >= ?
+    GROUP BY question_key
+  `).all(since);
+  const connectedHigh = db.prepare(`
+    SELECT COUNT(DISTINCT profile_id) AS n
+    FROM flourishing_checkins
+    WHERE question_key = 'connected' AND created_at >= ?
+      AND CAST(answer_text AS INTEGER) >= 4
+  `).get(since);
+  const feedback = db.prepare(`
+    SELECT COUNT(*) AS n,
+           AVG(quality) AS avgQuality,
+           SUM(CASE WHEN felt_safe = 1 THEN 1 ELSE 0 END) AS safeN
+    FROM introduction_feedback
+  `).get();
+  const incidents = db.prepare(`
+    SELECT COUNT(*) AS n FROM reports WHERE created_at >= ?
+  `).get(since);
+  const resolution = db.prepare(`
+    SELECT AVG((julianday(updated_at) - julianday(created_at)) * 24.0) AS avgHours
+    FROM reports
+    WHERE created_at >= ?
+      AND status != 'open'
+      AND updated_at IS NOT NULL AND updated_at != ''
+  `).get(since);
+  return { yesByKey, answeredByKey, connectedHigh, feedback, incidents, resolution };
 }
 
 // ---------- host assists (Human Mode) ----------
@@ -1798,7 +1994,7 @@ export function trySynchronicityMatch(beacon) {
       requesterId: mine.id,
       proposedId: otherProfile.id,
       intention: 'A shared synchronicity',
-      note: `You both carried '${word}' this week.\n\nIf you want, share what it has been bringing up for you. Only as much as feels good. Passing is always fine, and says nothing about what you noticed.`,
+      note: `You both carried '${word}' this week.\n\nIf you want, share what it has been bringing up for you. Only as much as feels good. Passing is always fine, and says nothing about what you noticed.\n\n${REFLECTIVE_FRAMING}`,
       score: 0,
     });
 

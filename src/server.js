@@ -23,15 +23,16 @@ import {
   validateOnboardingStart, validateOnboardingMessage, validateAgentInput,
   validateHostAssistInput, validateHostAssistProposal, validateBeaconInput,
 } from './validate.js';
-import { SYNC_DECK, getSyncCard } from './sync-deck.js';
+import { SYNC_DECK, getSyncCard, REFLECTIVE_FRAMING, getSyncCardAnnotated } from './sync-deck.js';
 import {
   startOnboarding, handleOnboardingTurn, questionForStage,
   quickRepliesForStage, isOnboardingStage,
 } from './onboarding.js';
-import { findBestMatch, buildIntroNote, findMatches, findAgentMatches } from './match.js';
+import { findBestMatch, buildIntroNote, findMatches, findAgentMatches, suggestFirstStep } from './match.js';
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
   remainingQuestions, getQuestionDef, buildBriefDraft, buildWarmIntroMessage,
+  realLifePrompt, REAL_LIFE_PROMPT_TEXT,
 } from './guide.js';
 import {
   greetingMessages, questionMessage, briefMessage, publicBrief,
@@ -96,6 +97,15 @@ import {
   createMessage,
   getConnectionPlan,
   upsertConnectionPlan,
+  // flourishing by design (v16): check-ins, intro feedback, real-life
+  // intentions, host analytics aggregates
+  createFlourishingCheckins,
+  listFlourishingCheckins,
+  getIntroductionFeedback,
+  createIntroductionFeedback,
+  setIntroductionRealLifeIntention,
+  completeIntroductionRealLifeIntention,
+  getFlourishingAggregates,
   createCircle,
   getCircle,
   listCircles,
@@ -246,6 +256,9 @@ function toWireIntroduction(intro) {
     responderNote: intro.responderNote,
     responseKind: intro.responseKind,
     requesterSharedText: intro.requesterSharedText || '',
+    // v16 ("Flourishing by Design"): member-declared offline intent.
+    realLifeIntention: intro.realLifeIntention || '',
+    intentionCompleted: intro.intentionCompleted === true,
     createdAt: intro.createdAt,
     updatedAt: intro.updatedAt,
   };
@@ -354,6 +367,72 @@ function requireParticipant(req, res, intro, profileId) {
   return intro;
 }
 
+// ---------- v16: flourishing consent settings ----------
+// `recFrequency` and `quietHours` extend consentSettings but are validated
+// here, not in src/validate.js: the legacy whitelist there only accepts
+// boolean keys, and this workstream may not touch that file. The keys are
+// stripped from the body before validateProfileInput runs and restored
+// before createProfile/updateProfile persists them, so the legacy
+// "unknown consent setting" check never fires for keys we validated.
+
+const REC_FREQUENCIES = ['daily', 'weekly', 'paused'];
+
+function isValidQuietTime(value) {
+  return typeof value === 'string' && /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
+}
+
+/**
+ * Validate the v16 consent-settings keys. Returns {ok, errors, stash}.
+ * When ok, `stash` holds the validated keys — removed from
+ * body.consentSettings so validateProfileInput doesn't reject them —
+ * and must be restored with restoreFlourishingConsentSettings before
+ * the profile is persisted.
+ */
+function extractFlourishingConsentSettings(body) {
+  const stash = {};
+  const errors = [];
+  const push = (field, message) => errors.push({ field, message });
+  const cs = body && body.consentSettings;
+  if (cs === undefined || cs === null) return { ok: true, errors, stash };
+  if (typeof cs !== 'object' || Array.isArray(cs)) return { ok: true, errors, stash }; // legacy validator reports this
+  if (cs.recFrequency !== undefined) {
+    if (!REC_FREQUENCIES.includes(cs.recFrequency)) {
+      push('consentSettings.recFrequency',
+        `consentSettings.recFrequency must be one of: ${REC_FREQUENCIES.join(', ')}`);
+    } else {
+      stash.recFrequency = cs.recFrequency;
+      delete cs.recFrequency;
+    }
+  }
+  if (cs.quietHours !== undefined) {
+    if (cs.quietHours === null) {
+      // null clears quiet hours.
+      stash.quietHours = null;
+      delete cs.quietHours;
+    } else {
+      const q = cs.quietHours;
+      const validShape = q !== null && typeof q === 'object' && !Array.isArray(q)
+        && isValidQuietTime(q.start) && isValidQuietTime(q.end);
+      if (!validShape) {
+        push('consentSettings.quietHours',
+          'consentSettings.quietHours must be {start:"HH:MM", end:"HH:MM"} (24h)');
+      } else {
+        stash.quietHours = { start: q.start, end: q.end };
+        delete cs.quietHours;
+      }
+    }
+  }
+  return { ok: errors.length === 0, errors, stash };
+}
+
+function restoreFlourishingConsentSettings(body, stash) {
+  if (!body || Object.keys(stash).length === 0) return;
+  if (body.consentSettings === undefined || body.consentSettings === null) {
+    body.consentSettings = {};
+  }
+  Object.assign(body.consentSettings, stash);
+}
+
 // ---------- routes ----------
 
 app.get('/api/health', (req, res) => {
@@ -396,8 +475,11 @@ app.get('/api/me', (req, res) => {
 // --- profiles ---
 
 app.post('/api/profiles', (req, res) => {
+  const flourishing = extractFlourishingConsentSettings(req.body);
+  if (!flourishing.ok) return validationErr(res, flourishing.errors);
   const { ok, errors } = validateProfileInput(req.body, { isUpdate: false });
   if (!ok) return validationErr(res, errors);
+  restoreFlourishingConsentSettings(req.body, flourishing.stash);
 
   const email = String(req.body.email).trim().toLowerCase();
   if (getProfileByEmail(email)) {
@@ -451,8 +533,12 @@ app.patch('/api/profiles/:id', (req, res) => {
     return err(res, 403, ERROR_CODES.FORBIDDEN, 'You can only edit your own profile.');
   }
 
+  // v16: strip recFrequency/quietHours before the legacy whitelist check.
+  const flourishing = extractFlourishingConsentSettings(req.body);
+  if (!flourishing.ok) return validationErr(res, flourishing.errors);
   const { ok, errors } = validateProfileInput(req.body, { isUpdate: true });
   if (!ok) return validationErr(res, errors);
+  restoreFlourishingConsentSettings(req.body, flourishing.stash);
 
   if (req.body.email !== undefined) {
     const email = String(req.body.email).trim().toLowerCase();
@@ -858,6 +944,9 @@ app.post('/api/introductions/:id/respond', (req, res) => {
     responderNote: (req.body.note || '').trim(),
   });
 
+  // Extra top-level response fields (the real-life prompt on accept).
+  const responseExtras = {};
+
   // Keep a synchronicity match in step with its introduction (if any).
   syncBeaconMatchForIntroduction(intro.id, targetStatus);
 
@@ -890,9 +979,12 @@ app.post('/api/introductions/:id/respond', (req, res) => {
         connectionType: updated.connectionType || '',
       }),
     });
+    // Real-life completion (GUIDE_BEHAVIOR_RULES §9): the optional,
+    // skippable prompt rides the accept response (see realLifePromptField).
+    Object.assign(responseExtras, realLifePromptField(intro.id));
   }
 
-  res.json(toWireIntroduction(updated));
+  res.json({ ...toWireIntroduction(updated), ...responseExtras });
 });
 
 /** End a mutual connection cleanly (either side). */
@@ -946,13 +1038,242 @@ function transition(targetStatus, role) {
     if (targetStatus === 'declined') {
       recordDeclineBlock(intro.proposedId, intro.requesterId);
     }
-    res.json(toWireIntroduction(updated));
+    // Real-life completion (GUIDE_BEHAVIOR_RULES §9) on the legacy accept
+    // path too: the optional, skippable prompt rides the accept response.
+    const extras = targetStatus === 'accepted' ? realLifePromptField(id) : {};
+    res.json({ ...toWireIntroduction(updated), ...extras });
   };
 }
 
 app.post('/api/introductions/:id/accept', transition('accepted', 'proposed'));
 app.post('/api/introductions/:id/decline', transition('declined', 'proposed'));
 app.post('/api/introductions/:id/withdraw', transition('withdrawn', 'requester'));
+
+// ---------- flourishing by design (v16) ----------
+// Outcome tracking, not engagement. Weekly member check-ins, per-introduction
+// feedback, and real-life intentions (member-declared offline intent — never
+// an outcome claim). Identity always comes from the session token; a
+// caller-supplied profileId is verified against it, never trusted for
+// identity. Copy stays honest: no medical/diagnosis/treatment claims, no
+// psychic certainty, no engagement-maximizing language.
+
+const FLOURISHING_QUESTIONS = [
+  { key: 'real_world_action', text: 'Did SEREN help you take a meaningful action in the real world this week?', kind: 'yesno' },
+  { key: 'connected', text: 'Did you feel more connected to others this week?', kind: 'scale1to5' },
+  { key: 'clarity_agency', text: 'Did this experience increase your clarity or sense of agency?', kind: 'scale1to5' },
+  { key: 'pressure', text: 'Did you feel pressured, confused, anxious, or dependent on the app?', kind: 'yesno' },
+  { key: 'suggestion_volume', text: 'Would you like fewer, the same, or more suggestions?', kind: 'choice', choices: ['fewer', 'same', 'more'] },
+  { key: 'supportive_now', text: 'What type of connection or practice would feel genuinely supportive right now?', kind: 'text', optional: true },
+  { key: 'offline_time', text: 'Did SEREN help you spend more meaningful time offline?', kind: 'yesno' },
+  { key: 'ai_humility', text: 'Did the SEREN guide feel appropriately humble and non-authoritative?', kind: 'yesno' },
+  { key: 'pause_autonomy', text: 'Do you feel you could pause or leave SEREN without losing autonomy?', kind: 'yesno' },
+];
+const FLOURISHING_QUESTION_BY_KEY = Object.fromEntries(
+  FLOURISHING_QUESTIONS.map((q) => [q.key, q]));
+
+/**
+ * A self-asserted profileId (body or query) must match the token-
+ * authenticated caller. 401 when no session, 400 when profileId is missing
+ * or malformed, 403 when it belongs to someone else.
+ */
+function requireSelfProfile(req, res, profileId) {
+  const profile = requireProfile(req, res);
+  if (!profile) return null;
+  const claimed = parseId(profileId);
+  if (claimed === null) {
+    validationErr(res, [{ field: 'profileId', message: 'profileId is required' }]);
+    return null;
+  }
+  if (claimed !== profile.id) {
+    err(res, 403, ERROR_CODES.FORBIDDEN, 'You can only act on your own profile.');
+    return null;
+  }
+  return profile;
+}
+
+/** Normalize a check-in answer to canonical text, or return an error. */
+function normalizeFlourishingAnswer(question, raw) {
+  const str = raw === null || raw === undefined ? '' : String(raw);
+  const trimmed = str.trim();
+  if (question.kind === 'yesno') {
+    const v = trimmed.toLowerCase();
+    if (['yes', 'y', 'true', '1'].includes(v)) return { ok: true, answer: 'yes' };
+    if (['no', 'n', 'false', '0'].includes(v)) return { ok: true, answer: 'no' };
+    return { ok: false, error: 'answer must be yes or no' };
+  }
+  if (question.kind === 'scale1to5') {
+    const n = Number(trimmed);
+    if (!Number.isInteger(n) || n < 1 || n > 5) {
+      return { ok: false, error: 'answer must be an integer from 1 to 5' };
+    }
+    return { ok: true, answer: String(n) };
+  }
+  if (question.kind === 'choice') {
+    const v = trimmed.toLowerCase();
+    if (question.choices.includes(v)) return { ok: true, answer: v };
+    return { ok: false, error: `answer must be one of: ${question.choices.join(', ')}` };
+  }
+  // kind === 'text': free text, capped like every other answer.
+  if (trimmed.length > 2000) return { ok: false, error: 'answer must be at most 2000 characters' };
+  if (trimmed.length === 0 && !question.optional) return { ok: false, error: 'answer is required' };
+  return { ok: true, answer: trimmed };
+}
+
+app.get('/api/flourishing/questions', (req, res) => {
+  // Static product copy; safe to expose to anyone with beta access.
+  res.json({ questions: FLOURISHING_QUESTIONS });
+});
+
+app.post('/api/flourishing/checkin', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const errors = [];
+  const responses = req.body?.responses;
+  if (!Array.isArray(responses) || responses.length === 0) {
+    errors.push({ field: 'responses', message: 'responses must be a non-empty array' });
+  }
+  const normalized = [];
+  const seen = new Set();
+  if (Array.isArray(responses)) {
+    responses.forEach((r, i) => {
+      const question = FLOURISHING_QUESTION_BY_KEY[r?.questionKey];
+      if (!question) {
+        errors.push({
+          field: `responses[${i}].questionKey`,
+          message: `unknown question key "${r?.questionKey}"`,
+        });
+        return;
+      }
+      if (seen.has(question.key)) {
+        errors.push({
+          field: `responses[${i}].questionKey`,
+          message: `duplicate answer for "${question.key}"`,
+        });
+        return;
+      }
+      seen.add(question.key);
+      const n = normalizeFlourishingAnswer(question, r?.answer);
+      if (!n.ok) {
+        errors.push({ field: `responses[${i}].answer`, message: n.error });
+        return;
+      }
+      normalized.push({ questionKey: question.key, answer: n.answer });
+    });
+  }
+  if (errors.length > 0) return validationErr(res, errors);
+  const { ids, createdAt } = createFlourishingCheckins(profile.id, normalized);
+  res.status(201).json({ checkin: { id: ids[0], createdAt } });
+});
+
+app.get('/api/flourishing/checkins/mine', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.query.profileId);
+  if (!profile) return;
+  res.json({ checkins: listFlourishingCheckins(profile.id) });
+});
+
+app.post('/api/introductions/:id/feedback', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const intro = getIntroduction(parseId(req.params.id));
+  if (!requireParticipant(req, res, intro, profile.id)) return;
+
+  const errors = [];
+  const { feltSafe, quality, notes } = req.body || {};
+  if (typeof feltSafe !== 'boolean') {
+    errors.push({ field: 'feltSafe', message: 'feltSafe must be a boolean' });
+  }
+  if (quality !== undefined && quality !== null) {
+    const q = Number(quality);
+    if (!Number.isInteger(q) || q < 1 || q > 5) {
+      errors.push({ field: 'quality', message: 'quality must be an integer from 1 to 5' });
+    }
+  }
+  if (notes !== undefined && notes !== null && notes !== '') {
+    if (typeof notes !== 'string' || notes.trim().length > 500) {
+      errors.push({ field: 'notes', message: 'notes must be at most 500 characters' });
+    }
+  }
+  if (errors.length > 0) return validationErr(res, errors);
+
+  if (getIntroductionFeedback(intro.id, profile.id)) {
+    return err(res, 409, ERROR_CODES.ALREADY_SUBMITTED,
+      'You have already left feedback on this introduction.');
+  }
+  try {
+    const feedback = createIntroductionFeedback({
+      introductionId: intro.id,
+      profileId: profile.id,
+      feltSafe,
+      quality: quality === undefined || quality === null ? null : Number(quality),
+      notes: typeof notes === 'string' ? notes : '',
+    });
+    res.status(201).json({ feedback });
+  } catch (e) {
+    // Race between the pre-check and the insert: the unique index is the
+    // real one-feedback enforcer.
+    if (String(e?.message).includes('UNIQUE')) {
+      return err(res, 409, ERROR_CODES.ALREADY_SUBMITTED,
+        'You have already left feedback on this introduction.');
+    }
+    throw e;
+  }
+});
+
+// Set the real-life intention on an introduction: a member-declared offline
+// intent (e.g. "meet for a walk"), never a claim about outcomes.
+app.post('/api/introductions/:id/real-life-intention', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const intro = getIntroduction(parseId(req.params.id));
+  if (!requireParticipant(req, res, intro, profile.id)) return;
+  const intention = typeof req.body?.intention === 'string' ? req.body.intention.trim() : '';
+  if (intention.length === 0 || intention.length > 300) {
+    return validationErr(res, [{ field: 'intention', message: 'intention must be 1-300 characters' }]);
+  }
+  const updated = setIntroductionRealLifeIntention(intro.id, intention);
+  res.json({ introduction: toWireIntroduction(updated) });
+});
+
+app.post('/api/introductions/:id/real-life-intention/complete', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const intro = getIntroduction(parseId(req.params.id));
+  if (!requireParticipant(req, res, intro, profile.id)) return;
+  const updated = completeIntroductionRealLifeIntention(intro.id);
+  res.json({ introduction: toWireIntroduction(updated) });
+});
+
+// Host-only outcome analytics. Deliberately no engagement metrics (no DAU,
+// session time, message volume, streaks): every number here is a
+// member-reported outcome. Windows: check-in metrics trail 30 days;
+// introduction feedback aggregates all feedback on record.
+app.get('/api/host/analytics', (req, res) => {
+  if (!requireHost(req, res)) return;
+  const agg = getFlourishingAggregates();
+  const pct = (num, den) => (den > 0 ? Math.round((100 * num) / den) : 0);
+  const answered = Object.fromEntries(agg.answeredByKey.map((r) => [r.questionKey, r.n]));
+  const yes = Object.fromEntries(agg.yesByKey.map((r) => [r.questionKey, r.yesN]));
+  const pctYes = (key) => pct(yes[key] || 0, answered[key] || 0);
+  res.json({
+    realWorldAction30d: { pct: pctYes('real_world_action'), n: answered['real_world_action'] || 0 },
+    introductionQuality: {
+      avgQuality: agg.feedback.avgQuality === null
+        ? null : Math.round(agg.feedback.avgQuality * 100) / 100,
+      pctFeltSafe: pct(agg.feedback.safeN || 0, agg.feedback.n || 0),
+      n: agg.feedback.n || 0,
+    },
+    connectionGains: { pct: pct(agg.connectedHigh.n || 0, answered['connected'] || 0) },
+    offlineTime: { pct: pctYes('offline_time') },
+    safety: {
+      incidents30d: agg.incidents.n || 0,
+      avgResolutionHrs: agg.resolution.avgHours === null
+        ? null : Math.round(agg.resolution.avgHours * 10) / 10,
+    },
+    autonomy: { pctPauseConfident: pctYes('pause_autonomy') },
+    aiHumility: { pct: pctYes('ai_humility') },
+    computedAt: new Date().toISOString(),
+  });
+});
 
 // Lift a decline block the caller placed: allow future direct requests from
 // the given requester again. Only the decliner (token identity) can lift a
@@ -1396,14 +1717,17 @@ function toWireBeacon(beacon) {
     status: beacon.status,
     createdAt: beacon.createdAt,
     expiresAt: beacon.expiresAt,
+    // Reflective framing (Flourishing): a beacon is a creative reflection
+    // prompt, never a prediction, diagnosis, or verified external message.
+    framing: REFLECTIVE_FRAMING,
   };
 }
 
-/** The curated deck: words and open reflective prompts. Curated content, safe to expose. */
+/** The curated deck: words, open reflective prompts, and per-card lenses. Curated content, safe to expose. */
 app.get('/api/sync/deck', (req, res) => {
   const profile = requireProfile(req, res);
   if (!profile) return;
-  res.json({ cards: SYNC_DECK.map((c) => ({ id: c.id, word: c.word, prompt: c.prompt })) });
+  res.json({ cards: SYNC_DECK.map((c) => getSyncCardAnnotated(c.id)) });
 });
 
 /**
@@ -1469,6 +1793,7 @@ app.post('/api/sync/beacons', (req, res) => {
         sharedWord: normalizedText,
         introductionId: match.introductionId,
         introduction: toWireIntroduction(introduction),
+        framing: REFLECTIVE_FRAMING,
       } : null,
     });
   } catch (e) {
@@ -1522,6 +1847,7 @@ app.get('/api/sync/matches/mine', (req, res) => {
       introductionId: m.introductionId,
       introduction: toWireIntroduction(intro),
       proposedAt: m.proposedAt,
+      framing: REFLECTIVE_FRAMING,
     };
   });
   res.json({ matches });
@@ -1577,14 +1903,33 @@ function proposalDeps(profile) {
   };
 }
 
+/**
+ * Group-first recommendation (Flourishing). Sensitive contexts (grief,
+ * trauma, vulnerability keywords) nudge toward a group first; otherwise a
+ * direct introduction. Adds two NEW fields per proposal —
+ * firstStepSuggestion ('group'|'direct') and firstStepSuggestionCopy — from
+ * match.js's suggestFirstStep(). The existing suggestedFirstStep string
+ * (built by guide.js's buildProposals) is left untouched.
+ */
+function withFirstStepSuggestion(proposals, intentionText) {
+  const rec = suggestFirstStep(intentionText || '');
+  return proposals.map((p) => ({
+    ...p,
+    firstStepSuggestion: rec.firstStep,
+    firstStepSuggestionCopy: rec.copy,
+  }));
+}
+
 function guideProposals(profile, session) {
   const parsed = { ...session.parsed, requestText: session.requestText };
   const myBrief = getBriefByProfile(profile.id);
-  return buildProposals(profile, parsed, session.answers, {
+  const proposals = buildProposals(profile, parsed, session.answers, {
     ...proposalDeps(profile),
     // The requester's stated offer grounds the candidate-side reason.
     requesterOffer: (myBrief && myBrief.offer_text) || session.answers.offer || '',
   });
+  const intentionText = (myBrief && myBrief.intention_text) || session.requestText || '';
+  return withFirstStepSuggestion(proposals, intentionText);
 }
 
 /**
@@ -1597,10 +1942,11 @@ function briefProposals(profile, brief) {
   const parsed = parseIntent(
     [brief.intention_text, brief.good_fit_text].filter(Boolean).join('\n'),
   );
-  return buildProposals(profile, parsed, {}, {
+  const proposals = buildProposals(profile, parsed, {}, {
     ...proposalDeps(profile),
     requesterOffer: brief.offer_text || '',
   });
+  return withFirstStepSuggestion(proposals, brief.intention_text || '');
 }
 
 app.post('/api/guide/sessions', (req, res) => {
@@ -1830,6 +2176,33 @@ function chatSessionView(session) {
 
 const botText = (text) => ({ role: 'bot', kind: 'text', text });
 
+/**
+ * The optional real-life completion prompt (GUIDE_BEHAVIOR_RULES §9) as a
+ * message array — empty when the context is not a natural conversation
+ * conclusion. Answering or skipping it never gates progress: it is purely
+ * informational. realLifePrompt() returns a fresh object per call.
+ */
+function maybeRealLifePrompt(context) {
+  const prompt = realLifePrompt(context);
+  return prompt ? [prompt] : [];
+}
+
+/**
+ * The real-life completion prompt as a response field for introduction
+ * accept payloads. Empty object when the context does not apply (skip
+ * silently). Exposed on the response rather than posted into the message
+ * thread: the thread has an exact-count contract (warm-intro on accept,
+ * nothing on decline) asserted by existing tests, so the prompt rides the
+ * accept response instead — the frontend renders it from there. The guide's
+ * real_life_prompt card keys "introduction in context" off
+ * msg.introductionId, so the id is attached when known.
+ */
+function realLifePromptField(introductionId = null) {
+  const prompt = realLifePrompt('introduction_accepted');
+  if (!prompt) return {};
+  return { realLifePrompt: { ...prompt, ...(introductionId === null ? {} : { introductionId }) } };
+}
+
 /** Materialized follow-up questions for a chat session's guide session. */
 function chatGuideQuestions(profile, gs) {
   return selectFollowUps({ ...(gs.parsed || {}), requestText: gs.requestText }, profile);
@@ -1955,9 +2328,14 @@ function chatHandleBriefReview(profile, session, text) {
     const approved = approveBrief(b.id, { sharedText: b.shared_text, consentShare: true });
     return {
       patch: { stage: 'proposals', pendingQuestionId: null, pendingField: null },
-      messages: [botText(
-        'Your brief is approved. Only your exact approved text will ever be shown to another person. Let me look for gentle fits…',
-      )],
+      messages: [
+        botText(
+          'Your brief is approved. Only your exact approved text will ever be shown to another person. Let me look for gentle fits…',
+        ),
+        // Real-life completion (GUIDE_BEHAVIOR_RULES §9): optional and
+        // skippable — answering or ignoring it never gates progress.
+        ...maybeRealLifePrompt('brief_approved'),
+      ],
       proposals: briefProposals(profile, approved),
       brief: publicBrief(approved),
       quickReplies: ['Start a new brief'],
@@ -2348,15 +2726,25 @@ function completeOnboardingChat(req, res, session, userEntry, turn) {
     email: c.email,
     interests: c.interests,
     intention: c.intention,
-    connectionPrefs: { seeking: c.seeking, availability: '' },
+    // The onboarding interview emits the full flourishing connectionPrefs
+    // (intentions, connectionLevels, topicsOut, privacyLevel, locationRadius,
+    // onlineMode, commBoundaries, syncMode); pass them through instead of
+    // dropping everything but seeking/availability.
+    connectionPrefs: { seeking: c.seeking, availability: '', ...c.connectionPrefs },
     consents: { introductions: true, community_visible: true, ai_matching: true },
     // Practices ride along where the legacy interest overlaps the taxonomy;
     // anything outside it stays on the legacy interests field only.
     practices: (c.interests || []).filter((i) => PRACTICE_VALUE_SET.has(i)),
     values: c.values || [],
+    // Calm defaults from the interview (recFrequency etc.); validated below
+    // by the v16 extractor before the legacy whitelist sees it.
+    consentSettings: c.consentSettings || {},
   };
+  const flourishing = extractFlourishingConsentSettings(payload);
+  if (!flourishing.ok) return validationErr(res, flourishing.errors);
   const { ok, errors } = validateProfileInput(payload, { isUpdate: false });
   if (!ok) return validationErr(res, errors);
+  restoreFlourishingConsentSettings(payload, flourishing.stash);
   const email = String(c.email).trim().toLowerCase();
   if (getProfileByEmail(email)) {
     return err(res, 409, ERROR_CODES.EMAIL_TAKEN,
