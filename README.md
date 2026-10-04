@@ -131,3 +131,19 @@ notably, **SARA** ("a friend for SARA") is undefined and unbuilt; there is no
 multi-user auth (single-device profile); no messaging, email, or real AI
 participants yet. **Not pushed to GitHub** — write access is pending; push and
 open the PR when credentials are available.
+
+## Flourishing by Design
+
+SEREN's product strategy framework — the principle that every feature must
+increase agency, real-world connection, reflection, meaning, and positive
+action. Strategy, enforceable policies, and the pre-ship test:
+
+- [docs/FLOURISHING_FRAMEWORK.md](docs/FLOURISHING_FRAMEWORK.md) — the
+  principle, the design question, six principles, metrics philosophy, and
+  how it maps to SEREN's layers/modes taxonomy.
+- [docs/TRUST_AND_SAFETY.md](docs/TRUST_AND_SAFETY.md) — community
+  standards, consent, spiritual integrity, anti-coercion, reporting &
+  moderation workflows, facilitator guidelines, event safety, AI
+  transparency, crisis resources.
+- [docs/FEATURE_ACCEPTANCE_CHECKLIST.md](docs/FEATURE_ACCEPTANCE_CHECKLIST.md) —
+  the 10-question pre-ship test with sign-off block.
