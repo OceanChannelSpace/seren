@@ -121,28 +121,77 @@ export async function renderChat(mount, opts = {}) {
     }
   }
 
+  // Rendered generically from the message shape
+  // ({text, questionId, input, options, skippable, max}) — never keyed on a
+  // specific questionId, so unknown future questions fall through the same
+  // path. 'free' questions show chips as writing prompts (tap fills the
+  // composer for editing). 'single' questions render tap-to-select choices
+  // that send on tap. 'multi' questions toggle chips and send the chosen
+  // labels as a comma-joined answer (the backend parses that format).
   function renderQuestion(msg) {
     const bubble = el(`<div class="bubble-bot"></div>`);
     if (msg.text) bubble.appendChild(el(`<p class="chat-text">${esc(msg.text)}</p>`));
 
-    // Suggestions are writing prompts, not multiple choice: tapping one
-    // drops its text into the composer so the member can edit and send it
-    // in their own words. For multi-pick questions, tapping several
-    // suggestions builds a comma-separated list in the composer.
-    const opts = Array.isArray(msg.options) ? msg.options : [];
-    const inputKind = msg.input || 'free';
+    const opts = (Array.isArray(msg.options) ? msg.options : [])
+      .map((o) => ({ label: o.label || o.value || '', value: o.value || o.label || '' }))
+      .filter((o) => o.label);
+    const inputKind = ['single', 'multi'].includes(msg.input) ? msg.input : 'free';
+    const max = Number.isFinite(Number(msg.max)) && Number(msg.max) > 0 ? Number(msg.max) : Infinity;
 
-    if (opts.length) {
+    if (opts.length && inputKind === 'single') {
+      const wrap = el(`<div class="suggest-block"></div>`);
+      wrap.appendChild(el(`<p class="suggest-hint">Tap your choice — or write your own in the box below.</p>`));
+      const row = el(`<div class="chip-row" role="group" aria-label="Choices"></div>`);
+      for (const o of opts) {
+        const b = el(`<button type="button" class="chip chip-select">${esc(o.label)}</button>`);
+        b.addEventListener('click', () => sendUserText(o.label));
+        row.appendChild(b);
+      }
+      wrap.appendChild(row);
+      bubble.appendChild(wrap);
+    } else if (opts.length && inputKind === 'multi') {
+      const wrap = el(`<div class="suggest-block"></div>`);
+      wrap.appendChild(el(`<p class="suggest-hint">${max === Infinity ? 'Tap all that fit —' : `Tap up to ${max} —`} then send your choices, or write your own below.</p>`));
+      const row = el(`<div class="chip-row" role="group" aria-label="Choices"></div>`);
+      const selected = new Set();
+      const sendRow = el(`<div class="chat-send-row"></div>`);
+      const sendBtn = el(`<button type="button" class="btn btn-primary btn-small" disabled>Send my choices</button>`);
+      sendRow.appendChild(sendBtn);
+      const refresh = () => {
+        sendBtn.disabled = selected.size === 0;
+        sendBtn.textContent = selected.size
+          ? `Send my choice${selected.size === 1 ? '' : 's'} (${selected.size})`
+          : 'Send my choices';
+      };
+      for (const o of opts) {
+        const b = el(`<button type="button" class="chip chip-select" aria-pressed="false">${esc(o.label)}</button>`);
+        b.addEventListener('click', () => {
+          if (selected.has(o.label)) {
+            selected.delete(o.label);
+            b.setAttribute('aria-pressed', 'false');
+          } else {
+            if (selected.size >= max) { toast(`You can choose up to ${max}.`); return; }
+            selected.add(o.label);
+            b.setAttribute('aria-pressed', 'true');
+          }
+          refresh();
+        });
+        row.appendChild(b);
+      }
+      sendBtn.addEventListener('click', () => sendUserText([...selected].join(', ')));
+      wrap.appendChild(row);
+      wrap.appendChild(sendRow);
+      bubble.appendChild(wrap);
+    } else if (opts.length) {
+      // 'free' (or unknown input kind): suggestions are writing prompts, not
+      // multiple choice — tapping drops text into the composer for editing.
       const wrap = el(`<div class="suggest-block"></div>`);
       wrap.appendChild(el(`<p class="suggest-hint">Not sure where to start? Tap one to begin writing, or use your own words.</p>`));
       const row = el(`<div class="chip-row" role="group" aria-label="Writing prompts"></div>`);
       for (const o of opts) {
-        const label = o.label || o.value || '';
-        if (!label) continue;
-        const b = el(`<button type="button" class="chip">${esc(label)}</button>`);
+        const b = el(`<button type="button" class="chip">${esc(o.label)}</button>`);
         b.addEventListener('click', () => {
-          const cur = input.value.trim();
-          input.value = (inputKind === 'multi' && cur) ? `${cur}, ${label}` : label;
+          input.value = o.label;
           input.focus();
         });
         row.appendChild(b);
@@ -162,6 +211,59 @@ export async function renderChat(mount, opts = {}) {
     thread.appendChild(bubble);
     scroll();
     announce(msg.text || 'SEREN asked a question.');
+  }
+
+  /** A real-life prompt from the guide: "What would you like to bring into
+   *  your real life in the next 24 hours?" Rendered as a calm card with an
+   *  optional text input and Skip — never a demand. If the message carries
+   *  an introductionId (an introduction in context), submitting saves the
+   *  intention on that introduction; otherwise the answer is simply
+   *  acknowledged warmly and nothing is stored anywhere. */
+  async function renderRealLifePrompt(msg) {
+    const wrap = el(`<div class="bubble-bot"></div>`);
+    wrap.appendChild(el(`<p class="kicker">A gentle nudge</p>`));
+    wrap.appendChild(el(`<p class="chat-text">${esc(msg.text || 'What would you like to bring into your real life in the next 24 hours?')}</p>`));
+    const area = el(`<div class="suggest-block"></div>`);
+    const ta = el(`<textarea class="input textarea" rows="2" maxlength="500" style="width:100%" aria-label="Your intention for the next 24 hours (optional)"></textarea>`);
+    area.appendChild(ta);
+    const row = el(`<div class="btn-row" style="margin-top:0.6rem"></div>`);
+    const share = el(`<button type="button" class="btn btn-primary btn-small">Hold this intention</button>`);
+    const skip = el(`<button type="button" class="btn btn-ghost btn-small">Skip</button>`);
+    row.appendChild(share);
+    row.appendChild(skip);
+    area.appendChild(row);
+    wrap.appendChild(area);
+    thread.appendChild(wrap);
+    scroll();
+    announce(msg.text || 'A gentle question about the next 24 hours.');
+
+    const done = (ack) => {
+      area.innerHTML = '';
+      area.appendChild(el(`<p class="chat-text" style="font-style:italic;color:var(--mist)">${esc(ack)}</p>`));
+      scroll();
+      announce(ack);
+    };
+
+    share.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      share.disabled = true; skip.disabled = true;
+      const introId = Number(msg.introductionId);
+      try {
+        if (introId && profileId) {
+          await api.setRealLifeIntention(introId, profileId, text || 'Held quietly, in my own words.');
+          done('Held with care. May it unfold gently in the next day.');
+        } else {
+          // No introduction in context — nothing to save to; acknowledge warmly.
+          done(text
+            ? 'Beautiful. Hold it gently — no need to announce it anywhere.'
+            : 'No words needed. May the next 24 hours be kind to you.');
+        }
+      } catch (e) {
+        share.disabled = false; skip.disabled = false;
+        toast(api.friendlyError(e));
+      }
+    });
+    skip.addEventListener('click', () => done('No pressure at all. These nudges come and go.'));
   }
 
   /** Read-only brief summary. private_notes are never sent by the API and
@@ -208,6 +310,8 @@ export async function renderChat(mount, opts = {}) {
     const kind = msg.kind || 'text';
     if (kind === 'question') {
       renderQuestion(msg);
+    } else if (kind === 'real_life_prompt') {
+      await renderRealLifePrompt(msg);
     } else if (kind === 'brief') {
       if (msg.text) appendBubble('bot', msg.text);
       renderBriefCard(msg.brief || (payload && payload.brief));

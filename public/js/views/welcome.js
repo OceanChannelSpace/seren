@@ -139,7 +139,8 @@ function renderLanding() {
       <li><strong>Staged consent.</strong> Accept, accept with a boundary, ask a question, or decline. Pausing is as easy as connecting.</li>
       <li><strong>No spiritual ranking.</strong> You will never see a “compatibility score” used to judge a soul.</li>
       <li><strong>Not therapy, not fortune-telling.</strong> SEREN is for peer connection — not clinical, medical, or psychic-certainty claims.</li>
-    </ul>`),
+    </ul>
+    <p class="guide-secondary">Read the full <a href="#/framework">Flourishing framework</a> — the design philosophy behind every feature — and our <a href="#/trust">Trust &amp; Safety</a> commitments.</p>`),
   ]);
   wrap.appendChild(principles);
 
@@ -204,6 +205,7 @@ function renderLanding() {
 
   wrap.appendChild(el(`<p class="footer-note center" style="margin-top:2.5rem;max-width:38rem;margin-left:auto;margin-right:auto">
     SEREN is a connection platform — not medical, mental-health, legal, or emergency support.
-    If you are in crisis, please contact your local emergency number or a trusted support line.</p>`));
+    If you are in crisis, please contact your local emergency number or a trusted support line.
+    See <a href="#/trust">Trust &amp; Safety</a> for resources and how to report.</p>`));
   return wrap;
 }

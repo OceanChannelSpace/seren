@@ -13,7 +13,13 @@ import { navigate } from '../router.js';
 
 const REPORT_OPTIONS = [
   { value: 'spam', label: 'Spam or solicitation' },
-  { value: 'harassment', label: 'Harassment or unwanted contact' },
+  { value: 'unwanted_contact', label: 'Unwanted contact' },
+  { value: 'harassment', label: 'Harassment' },
+  { value: 'manipulative_spiritual_claims', label: 'Manipulative spiritual claims' },
+  { value: 'coercion', label: 'Coercion or pressure' },
+  { value: 'exploitation', label: 'Exploitation' },
+  { value: 'unsafe_event', label: 'Unsafe in-person event' },
+  { value: 'harmful_ai_output', label: 'Harmful or misleading AI response' },
   { value: 'inappropriate-content', label: 'Inappropriate content' },
   { value: 'dishonest-profile', label: 'Dishonest or misleading profile' },
   { value: 'safety-concern', label: 'Safety concern' },
@@ -318,7 +324,7 @@ function openReportForm(reportedId, slot) {
   slot.innerHTML = '';
   const form = el('<div class="inline-form"></div>');
   form.appendChild(el('<h3>Report this person</h3>'));
-  form.appendChild(el('<p class="field-hint">Reports are reviewed by our team. Blocking also stops all contact immediately.</p>'));
+  form.appendChild(el('<p class="field-hint">Reports are reviewed by a human host. Blocking also stops all contact immediately. See <a href="#/trust">Trust & Safety</a> for what happens next.</p>'));
   const reasonSel = selectInput({ ariaLabel: 'Reason', options: REPORT_OPTIONS });
   const details = textArea({ placeholder: 'What happened? (optional)', maxLength: 1000, rows: 3 });
   form.appendChild(field('Reason', reasonSel));

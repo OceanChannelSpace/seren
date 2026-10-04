@@ -18,6 +18,11 @@ import { renderSaved } from './views/saved.js';
 import { renderBrief } from './views/brief.js';
 import { renderAgents } from './views/agents.js';
 import { renderModeration } from './views/moderation.js';
+import { renderFramework } from './views/framework.js';
+import { renderTrust } from './views/trust.js';
+import { renderFlourishing } from './views/flourishing.js';
+import { renderHost } from './views/host.js';
+import { renderAnalytics } from './views/analytics.js';
 
 async function boot() {
   // Beta gate state.
@@ -60,6 +65,11 @@ async function boot() {
   addRoute('/saved', renderSaved, { title: 'Saved', requiresBeta: true, requiresProfile: true });
   addRoute('/agents', renderAgents, { title: 'Intelligent agents', requiresBeta: true, requiresProfile: true });
   addRoute('/moderation', renderModeration, { title: 'Moderation', requiresBeta: true, requiresProfile: true, requiresHost: true });
+  addRoute('/framework', renderFramework, { title: 'Flourishing framework' });
+  addRoute('/trust', renderTrust, { title: 'Trust & safety' });
+  addRoute('/flourishing', renderFlourishing, { title: 'Flourishing check-in', requiresBeta: true, requiresProfile: true });
+  addRoute('/host', renderHost, { title: 'Facilitator', requiresBeta: true, requiresProfile: true, requiresHost: true });
+  addRoute('/analytics', renderAnalytics, { title: 'Community flourishing', requiresBeta: true, requiresProfile: true, requiresHost: true });
   addRoute('*', renderWelcome, { title: 'Welcome to SEREN' });
 
   startRouter();

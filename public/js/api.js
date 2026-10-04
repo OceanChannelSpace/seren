@@ -250,6 +250,33 @@ export const onboardingChatResume = (sessionId) =>
 export const relink = (email, name) =>
   request('POST', '/api/auth/relink', { email, name });
 
+// --- flourishing check-ins ---
+// GET /api/flourishing/questions → {questions:[{key,text,kind}]}
+export const getFlourishingQuestions = () =>
+  request('GET', '/api/flourishing/questions');
+// POST /api/flourishing/checkin {profileId, responses:[{questionKey,answer}]} → 201
+export const submitCheckin = (profileId, responses) =>
+  request('POST', '/api/flourishing/checkin', { profileId, responses });
+// GET /api/flourishing/checkins/mine?profileId= → {checkins:[...]} newest first
+export const getMyCheckins = (profileId) =>
+  request('GET', `/api/flourishing/checkins/mine${q({ profileId })}`);
+
+// --- post-connection flourishing ---
+// POST /api/introductions/:id/feedback {profileId,feltSafe,quality?,notes?} → 201
+export const submitIntroductionFeedback = (id, payload) =>
+  request('POST', `/api/introductions/${id}/feedback`, payload);
+// POST /api/introductions/:id/real-life-intention {profileId,intention} → 200
+export const setRealLifeIntention = (id, profileId, intention) =>
+  request('POST', `/api/introductions/${id}/real-life-intention`, { profileId, intention });
+// POST /api/introductions/:id/real-life-intention/complete {profileId} → 200
+export const completeRealLifeIntention = (id, profileId) =>
+  request('POST', `/api/introductions/${id}/real-life-intention/complete`, { profileId });
+
+// --- host flourishing analytics ---
+// GET /api/host/analytics (host-only) →
+export const getHostAnalytics = () =>
+  request('GET', '/api/host/analytics');
+
 /** Friendly one-line summary for an ApiError, for banners/toasts. */
 export function friendlyError(e) {
   if (e instanceof ApiError) {

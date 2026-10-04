@@ -230,6 +230,66 @@ export async function renderMe(root, ctx) {
     dsec.appendChild(toggleRow('Pause discovery', 'Pausing hides you from Discover and new requests. Existing connections stay exactly as they are.', cs.paused === true, (v) => patchSettings({ paused: v })));
     dsec.appendChild(toggleRow('Serendipity', 'Occasionally include one clearly-labeled wild card in your Discover suggestions — someone genuine, outside your obvious overlaps.', cs.serendipity !== false, (v) => patchSettings({ serendipity: v })));
     dsec.appendChild(toggleRow('Match me on my needs', 'When on, your stated needs are matched against what others offer — members and AI agents alike. Turn off to keep your needs out of matching entirely.', cs.needsMatching !== false, (v) => patchSettings({ needsMatching: v })));
+
+    // Suggestion pace + quiet hours (Flourishing by Design).
+    const paceBlock = el(`<div style="margin-top:1.1rem"></div>`);
+    paceBlock.appendChild(el(`<p class="field-label" style="font-weight:600;margin:0 0 0.25rem">Suggestion pace</p>`));
+    paceBlock.appendChild(el(`<p class="field-hint" style="margin:0 0 0.5rem">How often should SEREN offer you new suggestions? Fewer is a complete and respected choice.</p>`));
+    const freqSeg = el(`<div class="seg" role="group" aria-label="Suggestion pace"></div>`);
+    const FREQ_CHOICES = [['daily', 'Daily'], ['weekly', 'Weekly'], ['paused', 'Paused']];
+    const freqNow = cs.recFrequency || 'weekly';
+    for (const [value, label] of FREQ_CHOICES) {
+      const b = el(`<button type="button" aria-pressed="${value === freqNow}">${label}</button>`);
+      b.addEventListener('click', async () => {
+        if (b.getAttribute('aria-pressed') === 'true') return;
+        b.disabled = true;
+        try {
+          await patchSettings({ recFrequency: value });
+          for (const sib of freqSeg.querySelectorAll('button')) sib.setAttribute('aria-pressed', String(sib === b));
+          toast(value === 'paused' ? 'Suggestions paused. Take all the time you need.' : 'Suggestion pace updated.');
+        } catch (e) {
+          toast(friendlyError(e));
+        } finally {
+          b.disabled = false;
+        }
+      });
+      freqSeg.appendChild(b);
+    }
+    paceBlock.appendChild(freqSeg);
+    dsec.appendChild(paceBlock);
+
+    const qhBlock = el(`<div style="margin-top:1.1rem"></div>`);
+    qhBlock.appendChild(el(`<p class="field-label" style="font-weight:600;margin:0 0 0.25rem">Quiet hours</p>`));
+    qhBlock.appendChild(el(`<p class="field-hint" style="margin:0 0 0.5rem">SEREN stays quiet during these hours each day. Leave both empty for no quiet hours.</p>`));
+    const qhNow = (cs.quietHours && typeof cs.quietHours === 'object') ? cs.quietHours : {};
+    const timeRow = el(`<div class="time-row"></div>`);
+    const startInput = el(`<input type="time" class="input" aria-label="Quiet hours start" value="${esc(qhNow.start || '')}">`);
+    const endInput = el(`<input type="time" class="input" aria-label="Quiet hours end" value="${esc(qhNow.end || '')}">`);
+    timeRow.appendChild(startInput);
+    timeRow.appendChild(el(`<span aria-hidden="true" style="color:var(--mist)">to</span>`));
+    timeRow.appendChild(endInput);
+    const saveQh = el(`<button type="button" class="btn btn-secondary btn-small">Save quiet hours</button>`);
+    saveQh.addEventListener('click', async () => {
+      const start = startInput.value;
+      const end = endInput.value;
+      saveQh.disabled = true;
+      try {
+        // null clears quiet hours; the server requires both times otherwise.
+        const quietHours = (!start && !end) ? null : { start, end };
+        await patchSettings({ quietHours });
+        cs.quietHours = quietHours;
+        toast(!start && !end ? 'Quiet hours cleared.' : 'Quiet hours saved.');
+      } catch (e) {
+        toast(friendlyError(e));
+      } finally {
+        saveQh.disabled = false;
+      }
+    });
+    qhBlock.appendChild(timeRow);
+    const qhBtnRow = el(`<div class="btn-row" style="margin-top:0.6rem"></div>`);
+    qhBtnRow.appendChild(saveQh);
+    qhBlock.appendChild(qhBtnRow);
+    dsec.appendChild(qhBlock);
     shell.body.appendChild(discoveryCard);
 
     const reqCard = card([el(`<div class="settings-section"><h3>Requests & messages</h3></div>`)]);

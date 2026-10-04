@@ -20,7 +20,14 @@ const NAV_ITEMS = [
   { path: '#/requests', label: 'Requests', icon: '✉' },
   { path: '#/connections', label: 'Connections', icon: '❋' },
   { path: '#/circles', label: 'Circles', icon: '◉' },
+  { path: '#/flourishing', label: 'Flourishing', icon: '❀' },
   { path: '#/me', label: 'Me', icon: '☾' },
+];
+
+const HOST_NAV_ITEMS = [
+  { path: '#/host', label: 'Facilitate', icon: '⚘' },
+  { path: '#/analytics', label: 'Insights', icon: '◍' },
+  { path: '#/moderation', label: 'Moderation', icon: '⚑' },
 ];
 
 function parseHash() {
@@ -42,9 +49,10 @@ function buildNav() {
   if (!list || !bottom) return;
   const profileId = get('profileId');
   const items = profileId ? [...NAV_ITEMS] : [];
-  // The moderation queue is visible only to hosts; the server enforces it too.
+  // Host-only pages (facilitator dashboard, flourishing insights,
+  // moderation queue) are visible only to hosts; the server enforces it too.
   if (profileId && get('isHost') === true) {
-    items.push({ path: '#/moderation', label: 'Moderation', icon: '⚑' });
+    items.push(...HOST_NAV_ITEMS);
   }
   list.innerHTML = items.map((i) =>
     `<li><a href="${i.path}" data-nav="${i.path}"><span class="nav-icon" aria-hidden="true">${i.icon}</span><span class="nav-label">${i.label}</span></a></li>`).join('');
