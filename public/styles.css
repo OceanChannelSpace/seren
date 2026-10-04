@@ -1,46 +1,46 @@
-/* SEREN — "Sunlit Meadow" theme.
-   Light, warm, high-vibrational: soft creams and golds, serif display type,
-   calm whitespace. Explicitly NOT dark. Gentle ambient light (warm glows +
-   drifting golden motes). No webfonts, no images.
+/* SEREN — "Sunlit Channel" theme.
+   Light, high-vibrational, on-scheme with Ocean Channel Space: pale aqua
+   washes, deep ocean-teal ink, water-teal accents. Calm whitespace, airy,
+   trustworthy. Explicitly NOT dark.
 
    Token aliasing: the original component classes were written against the
    old "Deep Channel" token names (--seafoam, --ice, --mist, etc.). Those
-   names are kept as warm aliases below so every existing view works
-   unchanged — the whole app renders in the new light language. */
+   names are kept as ocean aliases below so every existing view works
+   unchanged — the whole app renders in the light ocean language. */
 
 :root {
   /* page */
-  --abyss: #faf5ea;        /* warm cream background (was near-black) */
-  --deep: #f3ead6;         /* deeper cream for washes (was deep green) */
-  --teal: #a87b1e;         /* rich gold (was teal) */
-  --glow-teal: #8a6115;    /* deep gold (was glow teal) */
+  --abyss: #f8fffd;        /* mint-tinted near-white (Ocean Channel button white) */
+  --deep: #e8f2ee;         /* pale aqua wash (derived from #28675f) */
+  --teal: #2f7d6e;         /* lightened water teal for interactive elements */
+  --glow-teal: #174b48;    /* deep water teal */
   /* accents */
-  --seafoam: #7d5c13;      /* deep warm gold text accent (was seafoam) */
-  --seafoam-deep: #a87b1e; /* primary gold (was seafoam-deep) */
-  --seafoam-pale: rgba(168, 123, 30, 0.09);
-  --gold: #a87b1e;
-  --gold-soft: rgba(168, 123, 30, 0.10);
-  --gold-line: rgba(168, 123, 30, 0.32);
-  --gold-deep: #7d5c13;
+  --seafoam: #174b48;      /* deep teal text accent */
+  --seafoam-deep: #28675f; /* primary water teal */
+  --seafoam-pale: rgba(40, 103, 95, 0.09);
+  --gold: #2f7d6e;         /* retired gold name, repointed to teal */
+  --gold-soft: rgba(40, 103, 95, 0.10);
+  --gold-line: rgba(23, 75, 72, 0.32);
+  --gold-deep: #174b48;
   /* text */
-  --ice: #38301f;          /* warm dark brown ink (was pale ice) */
-  --mist: #6f6250;         /* warm gray secondary (was mist) */
-  --mist-dim: #9c8f74;     /* dimmer warm gray (was mist-dim) */
+  --ice: #083f41;          /* deep ocean teal ink (Ocean Channel button text) */
+  --mist: #4e6f69;         /* muted teal-gray secondary */
+  --mist-dim: #84a09a;     /* dimmer teal-gray */
   /* lines & surfaces */
-  --line: rgba(120, 95, 50, 0.24);
-  --line-soft: rgba(120, 95, 50, 0.13);
-  --card: #fffdf7;         /* warm paper card */
-  --card-solid: #fffdf7;
-  --card-tint: #fbf6ea;
-  --field: #fffefa;        /* input fields */
+  --line: rgba(23, 75, 72, 0.24);
+  --line-soft: rgba(23, 75, 72, 0.13);
+  --card: #ffffff;         /* clean white card */
+  --card-solid: #ffffff;
+  --card-tint: #f1f8f6;
+  --field: #ffffff;        /* input fields */
   /* danger */
   --danger: #a9442f;
   --danger-bg: rgba(169, 68, 47, 0.08);
   /* shape & depth */
   --radius: 18px;
-  --shadow: 0 18px 50px rgba(120, 95, 50, 0.14);
-  --shadow-soft: 0 6px 22px rgba(120, 95, 50, 0.10);
-  --glow: 0 0 0 1px rgba(168, 123, 30, 0.28), 0 0 44px rgba(168, 123, 30, 0.16);
+  --shadow: 0 18px 50px rgba(23, 75, 72, 0.14);
+  --shadow-soft: 0 6px 22px rgba(23, 75, 72, 0.10);
+  --glow: 0 0 0 1px rgba(40, 103, 95, 0.28), 0 0 44px rgba(40, 103, 95, 0.16);
   /* type */
   --font-display: Georgia, "Iowan Old Style", "Times New Roman", Times, serif;
   --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -71,20 +71,20 @@ body::after {
   z-index: 0;
 }
 
-/* soft morning light from above, warm vignette */
+/* soft surface light from above, pale aqua washes */
 body::before {
   background:
-    radial-gradient(1100px 520px at 50% -120px, rgba(232, 196, 110, 0.40), transparent 65%),
-    radial-gradient(800px 420px at 12% 108%, rgba(168, 123, 30, 0.10), transparent 60%),
-    radial-gradient(900px 480px at 88% 104%, rgba(214, 178, 92, 0.14), transparent 60%),
-    linear-gradient(178deg, #fdf9ef 0%, var(--abyss) 55%, #f6eeda 100%);
+    radial-gradient(1100px 520px at 50% -120px, rgba(150, 205, 190, 0.35), transparent 65%),
+    radial-gradient(800px 420px at 12% 108%, rgba(40, 103, 95, 0.10), transparent 60%),
+    radial-gradient(900px 480px at 88% 104%, rgba(64, 140, 124, 0.12), transparent 60%),
+    linear-gradient(178deg, #fbfffe 0%, var(--abyss) 55%, #e9f4f0 100%);
 }
 body::after {
   background:
-    /* light beam one */
-    linear-gradient(105deg, transparent 42%, rgba(255, 244, 214, 0.55) 47%, transparent 53%),
-    /* light beam two */
-    linear-gradient(100deg, transparent 60%, rgba(255, 244, 214, 0.40) 66%, transparent 72%);
+    /* light ray one */
+    linear-gradient(105deg, transparent 42%, rgba(240, 250, 248, 0.55) 47%, transparent 53%),
+    /* light ray two */
+    linear-gradient(100deg, transparent 60%, rgba(240, 250, 248, 0.40) 66%, transparent 72%);
   animation: beam-sway 30s ease-in-out infinite alternate;
 }
 @keyframes beam-sway {
@@ -92,26 +92,26 @@ body::after {
   to   { transform: translate3d(1.5%, 1%, 0); opacity: 1; }
 }
 
-/* drifting golden motes — a fixed layer painted by JS-free box-shadow dots */
+/* drifting sea-glass motes — a fixed layer painted by JS-free box-shadow dots */
 .ocean-motes {
   position: fixed; inset: -10% 0 0 0; z-index: 0; pointer-events: none;
   width: 2px; height: 2px; border-radius: 50%;
   background: transparent;
   box-shadow:
-    6vw 12vh 0 0 rgba(168, 123, 30, 0.28), 18vw 78vh 0 0 rgba(168, 123, 30, 0.16),
-    31vw 34vh 0 0 rgba(168, 123, 30, 0.24), 44vw 88vh 0 0 rgba(168, 123, 30, 0.12),
-    57vw 8vh 0 0 rgba(190, 146, 52, 0.30), 63vw 56vh 0 0 rgba(168, 123, 30, 0.18),
-    74vw 24vh 0 0 rgba(190, 146, 52, 0.26), 89vw 66vh 0 0 rgba(168, 123, 30, 0.15),
-    12vw 48vh 0 0 rgba(125, 92, 19, 0.20), 26vw 92vh 0 0 rgba(168, 123, 30, 0.12),
-    38vw 18vh 0 0 rgba(190, 146, 52, 0.24), 52vw 72vh 0 0 rgba(168, 123, 30, 0.13),
-    68vw 40vh 0 0 rgba(190, 146, 52, 0.20), 82vw 90vh 0 0 rgba(168, 123, 30, 0.11),
-    94vw 12vh 0 0 rgba(190, 146, 52, 0.22), 8vw 84vh 0 0 rgba(168, 123, 30, 0.16),
-    22vw 58vh 0 0 rgba(168, 123, 30, 0.13), 48vw 44vh 0 0 rgba(168, 123, 30, 0.15),
-    60vw 96vh 0 0 rgba(168, 123, 30, 0.11), 78vw 52vh 0 0 rgba(168, 123, 30, 0.14),
-    15vw 26vh 1px 0 rgba(125, 92, 19, 0.28), 35vw 68vh 1px 0 rgba(168, 123, 30, 0.20),
-    55vw 28vh 1px 0 rgba(190, 146, 52, 0.25), 71vw 82vh 1px 0 rgba(168, 123, 30, 0.17),
-    86vw 38vh 1px 0 rgba(190, 146, 52, 0.22), 4vw 62vh 1px 0 rgba(168, 123, 30, 0.17),
-    28vw 6vh 1px 0 rgba(190, 146, 52, 0.24), 96vw 78vh 1px 0 rgba(168, 123, 30, 0.16);
+    6vw 12vh 0 0 rgba(40, 103, 95, 0.28), 18vw 78vh 0 0 rgba(40, 103, 95, 0.16),
+    31vw 34vh 0 0 rgba(40, 103, 95, 0.24), 44vw 88vh 0 0 rgba(40, 103, 95, 0.12),
+    57vw 8vh 0 0 rgba(94, 168, 150, 0.30), 63vw 56vh 0 0 rgba(40, 103, 95, 0.18),
+    74vw 24vh 0 0 rgba(94, 168, 150, 0.26), 89vw 66vh 0 0 rgba(40, 103, 95, 0.15),
+    12vw 48vh 0 0 rgba(23, 75, 72, 0.20), 26vw 92vh 0 0 rgba(40, 103, 95, 0.12),
+    38vw 18vh 0 0 rgba(94, 168, 150, 0.24), 52vw 72vh 0 0 rgba(40, 103, 95, 0.13),
+    68vw 40vh 0 0 rgba(94, 168, 150, 0.20), 82vw 90vh 0 0 rgba(40, 103, 95, 0.11),
+    94vw 12vh 0 0 rgba(94, 168, 150, 0.22), 8vw 84vh 0 0 rgba(40, 103, 95, 0.16),
+    22vw 58vh 0 0 rgba(40, 103, 95, 0.13), 48vw 44vh 0 0 rgba(40, 103, 95, 0.15),
+    60vw 96vh 0 0 rgba(40, 103, 95, 0.11), 78vw 52vh 0 0 rgba(40, 103, 95, 0.14),
+    15vw 26vh 1px 0 rgba(23, 75, 72, 0.28), 35vw 68vh 1px 0 rgba(40, 103, 95, 0.20),
+    55vw 28vh 1px 0 rgba(94, 168, 150, 0.25), 71vw 82vh 1px 0 rgba(40, 103, 95, 0.17),
+    86vw 38vh 1px 0 rgba(94, 168, 150, 0.22), 4vw 62vh 1px 0 rgba(40, 103, 95, 0.17),
+    28vw 6vh 1px 0 rgba(94, 168, 150, 0.24), 96vw 78vh 1px 0 rgba(40, 103, 95, 0.16);
   animation: mote-drift 26s ease-in-out infinite alternate;
 }
 @keyframes mote-drift {
@@ -137,7 +137,7 @@ body::after {
 
 .skip-link {
   position: absolute; left: 1rem; top: -4rem;
-  background: var(--seafoam-deep); color: #fffdf7;
+  background: var(--seafoam-deep); color: #f8fffd;
   padding: 0.6rem 1rem; border-radius: 10px;
   z-index: 100; text-decoration: none; transition: top 0.15s ease;
   font-weight: 700;
@@ -198,7 +198,7 @@ main.container { padding-top: 2.5rem; padding-bottom: 4rem; }
 }
 .nav-list a:hover { background: var(--seafoam-pale); color: var(--ice); }
 .nav-list a[aria-current="page"] {
-  background: rgba(168, 123, 30, 0.14); color: var(--gold-deep);
+  background: rgba(40, 103, 95, 0.14); color: var(--gold-deep);
   font-weight: 700;
 }
 
@@ -265,7 +265,7 @@ h3 { font-size: 1.2rem; margin: 0 0 0.5rem; }
   text-align: center;
   padding: 3.5rem 1rem 4rem;
   background:
-    radial-gradient(640px 260px at 50% 0%, rgba(214, 178, 92, 0.30), transparent 70%);
+    radial-gradient(640px 260px at 50% 0%, rgba(120, 185, 168, 0.30), transparent 70%);
   border-radius: var(--radius);
 }
 .hero .sigil {
@@ -359,7 +359,7 @@ input[type="text"]::placeholder, input[type="email"]::placeholder, textarea::pla
 }
 input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus, input[type="time"]:focus, textarea:focus {
   border-color: var(--gold-deep);
-  box-shadow: 0 0 0 3px rgba(168, 123, 30, 0.18);
+  box-shadow: 0 0 0 3px rgba(40, 103, 95, 0.18);
   outline: none;
 }
 textarea { resize: vertical; min-height: 7rem; }
@@ -397,12 +397,12 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
   cursor: pointer;
   transition: transform 0.08s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
-.chip:hover { border-color: var(--gold-deep); box-shadow: 0 2px 12px rgba(168, 123, 30, 0.18); }
+.chip:hover { border-color: var(--gold-deep); box-shadow: 0 2px 12px rgba(40, 103, 95, 0.18); }
 .chip[aria-pressed="true"] {
   background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
   border-color: var(--gold-deep);
   color: #3b2f16; font-weight: 700;
-  box-shadow: 0 4px 18px rgba(168, 123, 30, 0.35);
+  box-shadow: 0 4px 18px rgba(40, 103, 95, 0.35);
 }
 
 .chip-static {
@@ -450,14 +450,14 @@ legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; color: var(--ice)
 .btn-primary {
   background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
   color: #3b2f16;
-  box-shadow: 0 6px 26px rgba(168, 123, 30, 0.35);
+  box-shadow: 0 6px 26px rgba(40, 103, 95, 0.35);
 }
-.btn-primary:hover:not([disabled]) { box-shadow: 0 8px 32px rgba(168, 123, 30, 0.45); }
+.btn-primary:hover:not([disabled]) { box-shadow: 0 8px 32px rgba(40, 103, 95, 0.45); }
 
 .btn-secondary {
   background: var(--seafoam-pale); border-color: var(--line); color: var(--ice);
 }
-.btn-secondary:hover { border-color: var(--gold-deep); background: rgba(168, 123, 30, 0.16); }
+.btn-secondary:hover { border-color: var(--gold-deep); background: rgba(40, 103, 95, 0.16); }
 
 .btn-ghost {
   background: transparent; border-color: transparent; color: var(--mist);
@@ -675,7 +675,7 @@ body.beta-locked .site-footer { display: none; }
 .input:focus {
   outline: none;
   border-color: var(--gold-deep);
-  box-shadow: 0 0 0 3px rgba(168, 123, 30, 0.18);
+  box-shadow: 0 0 0 3px rgba(40, 103, 95, 0.18);
 }
 .input::placeholder { color: var(--mist-dim); }
 .textarea { resize: vertical; min-height: 5.5rem; line-height: 1.6; }
@@ -693,10 +693,10 @@ select.input {
 /* ---------- chip groups ---------- */
 .chip-group { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.5rem; }
 .chip[aria-checked="true"] {
-  background: rgba(168, 123, 30, 0.18);
+  background: rgba(40, 103, 95, 0.18);
   border-color: var(--gold-deep);
   color: var(--ice);
-  box-shadow: 0 2px 12px rgba(168, 123, 30, 0.20);
+  box-shadow: 0 2px 12px rgba(40, 103, 95, 0.20);
 }
 
 /* ---------- pills & status ---------- */
@@ -709,9 +709,9 @@ select.input {
   border: 1px solid var(--line);
   white-space: nowrap;
 }
-.pill-good { background: rgba(168, 123, 30, 0.14); border-color: var(--gold-line); color: var(--gold-deep); }
+.pill-good { background: rgba(40, 103, 95, 0.14); border-color: var(--gold-line); color: var(--gold-deep); }
 .pill-pending { background: var(--seafoam-pale); border-color: var(--line); color: var(--mist); }
-.pill-muted { background: rgba(120, 95, 50, 0.06); border-color: var(--line-soft); color: var(--mist-dim); }
+.pill-muted { background: rgba(23, 75, 72, 0.06); border-color: var(--line-soft); color: var(--mist-dim); }
 .pill-danger { background: var(--danger-bg); border-color: rgba(169, 68, 47, 0.4); color: var(--danger); }
 
 /* ---------- avatars ---------- */
@@ -774,10 +774,10 @@ select.input {
 .stepper { display: flex; gap: 0.4rem; margin: 0 0 1.75rem; }
 .stepper .step-dot {
   flex: 1; height: 0.3rem; border-radius: 999px;
-  background: rgba(168, 123, 30, 0.18);
+  background: rgba(40, 103, 95, 0.18);
 }
 .stepper .step-dot.done { background: var(--seafoam-deep); }
-.stepper .step-dot.now { background: var(--gold-deep); box-shadow: 0 0 12px rgba(168, 123, 30, 0.45); }
+.stepper .step-dot.now { background: var(--gold-deep); box-shadow: 0 0 12px rgba(40, 103, 95, 0.45); }
 .step-nav { display: flex; justify-content: space-between; gap: 0.75rem; margin-top: 1.75rem; }
 
 /* ---------- profile cards ---------- */
@@ -846,7 +846,7 @@ select.input {
 }
 .message-mine {
   align-self: flex-end;
-  background: rgba(168, 123, 30, 0.14);
+  background: rgba(40, 103, 95, 0.14);
   border-color: var(--gold-line);
 }
 .message .msg-body { margin: 0; white-space: pre-wrap; }
@@ -882,7 +882,7 @@ select.input {
 .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
 .switch .track {
   position: absolute; inset: 0; border-radius: 999px;
-  background: rgba(120, 95, 50, 0.18); border: 1px solid var(--line);
+  background: rgba(23, 75, 72, 0.18); border: 1px solid var(--line);
   transition: background 0.2s;
 }
 .switch .track::after {
@@ -890,7 +890,7 @@ select.input {
   width: 1.3rem; height: 1.3rem; border-radius: 50%;
   background: var(--mist-dim); transition: transform 0.2s, background 0.2s;
 }
-.switch input:checked + .track { background: rgba(168, 123, 30, 0.45); }
+.switch input:checked + .track { background: rgba(40, 103, 95, 0.45); }
 .switch input:checked + .track::after { transform: translateX(1.35rem); background: var(--gold-deep); }
 .switch input:focus-visible + .track { outline: 2px solid var(--gold-deep); outline-offset: 2px; }
 
