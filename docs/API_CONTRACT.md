@@ -418,3 +418,112 @@ your own" (text input) and "Draw from the deck" (calm shuffle/pause/reveal,
 instead). Shows the active beacon with expiry, a withdraw option, gentle
 expiry close-out ("No one else carried 'X' that week..."), and proposed
 matches linking into Requests.
+
+## Addendum — v16: Flourishing by Design (2026-10-04)
+
+Intention-based onboarding, Resonant Introductions reframing, Synchronicity
+reflective safeguards, Flourishing Check-In, real-life completion prompts,
+extended safety reporting, notification preferences, host analytics.
+
+### Schema v16 (`PRAGMA user_version = 16`)
+
+All changes additive and backward-compatible.
+
+| Table | Change |
+|---|---|
+| `flourishing_checkins` (new) | `id`, `profile_id` FK → profiles ON DELETE CASCADE, `question_key` TEXT, `answer_text` TEXT, `created_at` TEXT. Index on `profile_id`. |
+| `introduction_feedback` (new) | `id`, `introduction_id` FK → introductions ON DELETE CASCADE, `profile_id` FK → profiles ON DELETE CASCADE, `felt_safe` INTEGER 0/1, `quality` INTEGER NULL (1–5), `notes` TEXT DEFAULT '', `created_at` TEXT. Unique index on (`introduction_id`, `profile_id`). |
+| `introductions` | += `real_life_intention` TEXT NOT NULL DEFAULT '', `intention_completed` INTEGER NOT NULL DEFAULT 0 |
+| `reports` | += `updated_at` TEXT (backfilled to `created_at`; stamped on status change — enables resolution-latency analytics) |
+
+`defaultConsentSettings` gains `recFrequency: 'weekly'`.
+
+### Flourishing Check-In endpoints
+
+- `GET /api/flourishing/questions` → 200 `{questions:[{key,text,kind}]}`,
+  `kind` in `yesno|scale1to5|choice|text`. The 9 questions: `real_world_action`,
+  `connected`, `clarity_agency`, `pressure`, `suggestion_volume`
+  (choice `fewer|same|more`), `supportive_now` (text, optional),
+  `offline_time`, `ai_humility`, `pause_autonomy`. Copy is non-clinical;
+  frontend frames history as "Your reported pattern".
+- `POST /api/flourishing/checkin` `{profileId, responses:[{questionKey,answer}]}`
+  → 201 `{checkin:{id,createdAt}}`. Answers normalized server-side
+  (yesno→`yes`/`no`, scale→`1`–`5`, choice→lowercase, text trimmed ≤2000).
+  400 `validation_error`; profileId must match the session caller (403).
+- `GET /api/flourishing/checkins/mine?profileId=` → 200
+  `{checkins:[{id,questionKey,answer,createdAt}]}` newest first, caller's own only.
+
+### Introduction feedback + real-life intentions
+
+- `POST /api/introductions/:id/feedback`
+  `{profileId, feltSafe:boolean, quality?:1-5, notes?:≤500}` → 201
+  `{feedback:{id,introductionId,profileId,feltSafe,quality,notes,createdAt}}`.
+  403 unless caller is a participant; 409 `already_submitted`.
+- `POST /api/introductions/:id/real-life-intention` `{profileId, intention:1–300}`
+  → 200 `{introduction}` (participant-only).
+- `POST /api/introductions/:id/real-life-intention/complete` `{profileId}`
+  → 200 `{introduction}` (participant-only). Introduction wire gains
+  `realLifeIntention`, `intentionCompleted`.
+
+### Host analytics
+
+- `GET /api/host/analytics` (host-only, `requireHost`) → 200
+  `{realWorldAction30d:{pct,n}, introductionQuality:{avgQuality,pctFeltSafe,n},
+  connectionGains:{pct}, offlineTime:{pct}, safety:{incidents30d,avgResolutionHrs},
+  autonomy:{pctPauseConfident}, aiHumility:{pct}, computedAt}`.
+  Check-in metrics trail 30 days; `pct` = % of distinct answerers (`yes`, or
+  ≥4 for `connected`); `avgResolutionHrs` = mean `updated_at − created_at`
+  for reports closed in the last 30d (`null` when none). **No engagement
+  metrics are tracked or exposed** (no DAU, session time, message volume,
+  streaks).
+
+### Reporting, preferences, proposals, synchronicity
+
+- `POST /api/reports` categories extended (additive): `unwanted_contact`,
+  `manipulative_spiritual_claims`, `coercion`, `exploitation`, `harassment`,
+  `unsafe_event`, `harmful_ai_output` (labels in `src/constants.js`).
+- `PATCH /api/profiles/:id` (and the create path) accept
+  `consentSettings.recFrequency` (`daily|weekly|paused`, default `weekly`)
+  and `consentSettings.quietHours` (`{start:'HH:MM',end:'HH:MM'}`; `null` clears).
+- Onboarding persists extended `connectionPrefs`: `intentions[]` (0–9),
+  `connectionLevels[]` (0–5), `topicsOut[]` (subset of the fixed interest list),
+  `privacyLevel` (`private|community|discoverable`, default `community`),
+  `locationRadius` (`local|regional|anywhere`, default `anywhere`),
+  `onlineMode` (`online|offline|hybrid`, default `hybrid`),
+  `commBoundaries` (≤200 chars), `syncMode` (`on|off|limited`, default `limited`).
+  `createProfile`/`updateProfile` merge `connectionPrefs` rather than picking keys.
+- Proposals now carry `firstStepSuggestion: 'group'|'direct'` +
+  `firstStepSuggestionCopy` (from `match.js` `suggestFirstStep()`, sensitive
+  contexts such as grief/trauma suggest a small group first — suggest, never
+  block). The legacy `suggestedFirstStep` string is untouched.
+- Match copy reframed: reasons use the resonance pattern ("SEREN noticed a
+  possible point of resonance based on … This is only an optional introduction
+  — not a prediction or judgment about compatibility."). No fate/destiny/proof
+  language anywhere (locked by tests).
+- `GET /api/sync/deck` cards now include `lens` (`symbolic|psychological|
+  spiritual|practical`) and `framing`. Beacon create/mine outputs and
+  `GET /api/sync/matches/mine` include `framing: "This is a creative
+  reflection prompt, not a prediction, diagnosis, or verified external message."`
+  The beacon-match introduction note appends the framing.
+
+### Guide: new message kind
+
+- Chat message kind `real_life_prompt`: `{role:'bot', kind:'real_life_prompt',
+  text, skippable:true}` — "What would you like to bring into your real life
+  in the next 24 hours?" Emitted after brief approval (in chat transcript)
+  and on introduction accept (as top-level `realLifePrompt` on the accept
+  response payload, with `introductionId`; absent on decline). Answering or
+  skipping never gates progress. Guide behavior rules live in the
+  `GUIDE_BEHAVIOR_RULES` block atop `src/guide.js` (agency-first phrasings,
+  epistemic humility, banned phrases, crisis → professional support).
+
+### Frontend routes (hash)
+
+`#/framework` (Flourishing Framework strategy page), `#/trust` (Trust, Safety
+& Spiritual Integrity), `#/flourishing` (check-in UI), `#/host` (facilitator
+dashboard, host-only), `#/analytics` (flourishing analytics, host-only).
+
+### Docs
+
+`docs/FLOURISHING_FRAMEWORK.md` (strategy), `docs/TRUST_AND_SAFETY.md`
+(policies), `docs/FEATURE_ACCEPTANCE_CHECKLIST.md` (10-question pre-ship test).
