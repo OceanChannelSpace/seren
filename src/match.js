@@ -80,6 +80,111 @@ function sameRegion(a, b) {
   return cityA.length > 2 && cityA === cityB;
 }
 
+/* ------------------------------------------------------------------ */
+/* Resonant introductions — transparent, low-claim framing.            */
+/* (Flourishing by Design, section C.)                                 */
+/*                                                                     */
+/* Every introduction is optional and explainable. No copy in this     */
+/* file asserts fate, destiny, spiritual proof, certainty, or          */
+/* objective compatibility — every reason string and intro note is     */
+/* audited below (and by tests/resonant-introductions.test.js) to      */
+/* keep it that way.                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sensitive-context keyword set. When the requester's intention or brief
+ * text signals a tender context (grief, trauma-adjacent, or explicitly
+ * vulnerable topics), match outputs recommend a small facilitated group
+ * circle as the first step. Suggest, never coerce: direct introductions
+ * are never blocked on this basis.
+ *
+ * Detection is a plain case-insensitive substring match against the
+ * requester's intention/brief text — deliberately narrow and documented,
+ * not a clinical classifier.
+ */
+export const SENSITIVE_CONTEXT_KEYWORDS = Object.freeze([
+  // grief & loss
+  'grief',
+  'grieving',
+  'bereaved',
+  'bereavement',
+  'mourning',
+  'widow',
+  'widower',
+  'loss of',
+  'lost my',
+  // trauma-adjacent
+  'trauma',
+  'traumatic',
+  'traumatized',
+  'ptsd',
+  'abuse',
+  'assault',
+  'addiction',
+  'relapse',
+  'recovery',
+  // explicitly vulnerable
+  'divorce',
+  'separation',
+  'suicide',
+  'suicidal',
+  'self-harm',
+  'eating disorder',
+]);
+
+/**
+ * True when the given free text signals a sensitive context per the
+ * keyword set above.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function detectSensitiveContext(text) {
+  const t = String(text || '').toLowerCase();
+  return SENSITIVE_CONTEXT_KEYWORDS.some((k) => t.includes(k));
+}
+
+/** Gentle group-first copy for tender topics. */
+export const GROUP_FIRST_STEP_COPY =
+  'For tender topics like this, many people prefer meeting first in a small facilitated circle.';
+
+/** Low-claim framing copy for ordinary introductions. */
+export const DIRECT_FIRST_STEP_COPY =
+  'This is only an optional introduction — not a prediction or judgment about compatibility.';
+
+/**
+ * Recommend whether a match should lead with a small group/circle or a
+ * direct introduction.
+ *
+ * @param {string} intentionText the requester's intention / brief text
+ * @returns {{ firstStep: 'group' | 'direct', copy: string }}
+ */
+export function suggestFirstStep(intentionText = '') {
+  if (detectSensitiveContext(intentionText)) {
+    return { firstStep: 'group', copy: GROUP_FIRST_STEP_COPY };
+  }
+  return { firstStep: 'direct', copy: DIRECT_FIRST_STEP_COPY };
+}
+
+/**
+ * The user-facing "why this introduction" summary pattern: transparent,
+ * respectful, low-claim.
+ *
+ * @param {object} parts { sharedPractices, sharedInterests, sharedIntentions }
+ * @returns {string}
+ */
+export function resonanceNote({ sharedPractices = [], sharedInterests = [], sharedIntentions = [] } = {}) {
+  const labels = [
+    ...asArray(sharedPractices).slice(0, 3).map((p) => PRACTICE_LABELS[p] || p),
+    ...asArray(sharedInterests).slice(0, 3),
+    ...asArray(sharedIntentions).slice(0, 2).map((i) => INTENTION_LABELS[i] || i),
+  ].slice(0, 4);
+  const basis = labels.length > 0 ? ` based on your shared interest in ${labels.join(', ')}` : '';
+  return (
+    `${BRAND.name} noticed a possible point of resonance${basis}. ` +
+    'This is only an optional introduction — not a prediction or judgment about compatibility.'
+  );
+}
+
 /**
  * Score one candidate against a requester with explainable rules.
  *
@@ -347,7 +452,18 @@ export function findMatches(requester, candidates, opts = {}) {
     }
   }
 
-  return final;
+  // Flourishing by Design (section C): every match output carries the
+  // transparent resonance framing and a group-first vs. direct suggestion.
+  // NOTE: guide.js proposals already expose a string-typed `suggestedFirstStep`
+  // (the gentle first-step sentence, per the v3 contract) and overwrite it
+  // explicitly in buildProposals — see the report for the backend wiring note.
+  const step = suggestFirstStep(intentionText);
+  return final.map((r) => ({
+    ...r,
+    resonanceNote: resonanceNote(r),
+    suggestedFirstStep: step.firstStep,
+    firstStepCopy: step.copy,
+  }));
 }
 
 /* ------------------------------------------------------------------ */
@@ -542,7 +658,7 @@ export function buildIntroNote(requester, candidate, sharedInterests, sharedKeyw
     if (sharedKeywords.length > 0) {
       firstSentence += `, but you both resonate with ${sharedKeywords.join(', ')}`;
     }
-    firstSentence += ' — SEREN brought you together anyway.';
+    firstSentence += ' — SEREN noticed a possible point of resonance between you.';
   }
 
   const secondSentence = intentionEcho
