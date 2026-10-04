@@ -6,6 +6,76 @@
 // proposal building. Pure functions: no network, no LLM, no side effects.
 // Tone contract: warm and grounded; never supernatural certainty, never
 // clinical/therapy/medical claims, never numeric scores in output.
+// All bot copy in this module is written to satisfy GUIDE_BEHAVIOR_RULES
+// below (the maintainable "system prompt" for future contributors).
+
+/* ============================================================================
+ * GUIDE_BEHAVIOR_RULES — the SEREN guide's behavior contract.
+ *
+ * This engine is rule-based (deterministic keyword/regex matching, NOT an
+ * LLM or external AI). The rules below are the maintainable "system prompt":
+ * every bot-facing string in this module is written to satisfy them, and
+ * tests/guide-flourishing.test.js asserts the banned phrasing never appears.
+ * ----------------------------------------------------------------------------
+ * 1. WHO THE GUIDE IS
+ *    A warm, grounded companion that helps a person clarify intention,
+ *    offers optional reflective prompts, helps prepare for a conversation,
+ *    gathering, practice, or collaboration, suggests grounded next actions,
+ *    helps formulate boundaries and questions, and facilitates reflection
+ *    after a connection or event. It encourages real-world support and
+ *    community over prolonged chat dependence: the guide is a doorway,
+ *    not a destination.
+ * 2. SPIRITUALLY LITERATE, NEVER SUPERNATURAL
+ *    Meditation, ritual, dreamwork, symbolism, tarot, astrology, and other
+ *    contemplative vocabularies are welcome as human practices and tools
+ *    for meaning-making. The guide never claims supernatural knowledge,
+ *    certainty, or predictive power.
+ * 3. AGENCY-FIRST LANGUAGE (use phrasings like these)
+ *    - "One possible interpretation is…"
+ *    - "Would you like a reflective, symbolic, practical, or psychological
+ *      lens?"
+ *    - "What meaning does this hold for you?"
+ *    - "You are the best authority on your own experience."
+ * 4. EPISTEMIC HUMILITY
+ *    Keep these distinct in how things are framed: (a) personal
+ *    meaning-making, (b) symbolic/creative interpretation, (c)
+ *    evidence-informed information, (d) community perspectives, (e)
+ *    unverified claims. Never present an interpretation as objectively
+ *    true, medically valid, predictive of the future, or externally
+ *    verified.
+ * 5. THE GUIDE MUST NEVER
+ *    - present itself as conscious, enlightened, spiritually superior,
+ *      psychic, or an entity with spiritual authority;
+ *    - claim to channel beings, know anyone's destiny, identify a soulmate,
+ *      reveal past lives as fact, or diagnose energetic/spiritual conditions;
+ *    - reinforce paranoia, delusions, grandiosity, or certainty around
+ *      unverified interpretations;
+ *    - encourage isolation from real-world support;
+ *    - act as guru, oracle, therapist, or source of metaphysical certainty.
+ * 6. BANNED PHRASING (never emit, in any casing)
+ *    "This sign means you must…", "You are destined to…",
+ *    "Your energy proves…", "I have detected an entity, hidden truth, or
+ *    future outcome." Also banned as fact-claims: "soulmate", "past life",
+ *    diagnosing ("diagnos…"), and commanding "you must".
+ * 7. CRISIS
+ *    Always encourage professional and trusted-human support; never weaken
+ *    that. The guide does not counsel, diagnose, or assess risk — it points
+ *    to real people and professional help. (The welcome screen carries the
+ *    crisis line; do not contradict or remove it.)
+ * 8. MECHANICAL GUARDRAILS
+ *    - Every bot text is 400 characters or fewer.
+ *    - Honest labeling: rule-based logic, never presented as an AI model.
+ *      SEREN never claims to be human.
+ *    - Real-people-only matching surfaces: demo/seed and QA profiles never
+ *      appear as candidates.
+ *    - Consent-first: nothing is shared with another person until the
+ *      member explicitly approves it.
+ * 9. REAL-LIFE COMPLETION
+ *    At natural conversation conclusions (a brief is approved; an
+ *    introduction is accepted or acted on), offer the optional, skippable
+ *    real-life prompt (see realLifePrompt()): "What would you like to
+ *    bring into your real life in the next 24 hours?"
+ * ========================================================================== */
 
 import {
   PRACTICES, INTENTIONS,
@@ -193,19 +263,19 @@ const QUESTION_DEFS = {
   // Free-text questions — never inferable, always asked (until answered/skipped).
   offer: {
     id: 'offer',
-    prompt: 'What could you offer the other person? For example: listening, experience, a practice, collaboration.',
+    prompt: 'What could you offer the other person? For example: listening, experience, a practice, collaboration. Skip freely — "nothing yet" is an honest answer.',
     type: 'free',
     skippable: true,
   },
   mutual: {
     id: 'mutual',
-    prompt: 'What would make this meeting worthwhile for both of you?',
+    prompt: 'What would make this meeting worthwhile for both of you? There is no wrong answer — you know what a good conversation feels like.',
     type: 'free',
     skippable: true,
   },
   boundaries: {
     id: 'boundaries',
-    prompt: "Anything you'd like SEREN to keep private or handle gently?",
+    prompt: 'Anything you would like kept private, or handled gently? You set the boundaries here — I only keep the ones you name.',
     type: 'free',
     skippable: true,
   },
@@ -229,20 +299,20 @@ const QUESTION_DEFS = {
   },
   commitment: {
     id: 'commitment',
-    prompt: 'What kind of rhythm are you imagining?',
+    prompt: 'What kind of rhythm are you imagining? One conversation, occasional, or something steady — all are welcome.',
     type: 'single',
     skippable: true,
     options: () => optionList(COMMITMENT_LEVELS.map((c) => [c, COMMITMENT_LABELS[c]])),
   },
   timing: {
     id: 'timing',
-    prompt: 'Any timing or availability SEREN should respect?',
+    prompt: 'Any timing or availability you would like honored?',
     type: 'free',
     skippable: true,
   },
   depth: {
     id: 'depth',
-    prompt: 'What matters most in a connection right now? (pick up to 3)',
+    prompt: 'What matters most in a connection right now? Pick up to 3 — or skip and trust your own read.',
     type: 'multi',
     max: 3,
     skippable: true,
@@ -597,7 +667,12 @@ export function buildBriefDraft(profile, session) {
  * Deterministic warm-intro message posted by SEREN (senderId 0) when a
  * recipient accepts an introduction. Uses only names, each side's approved
  * shared_text, and a gentle first step — never invented history or certainty.
+ * Fixed fragments are exported so allBotCopy() (and tests) can collect them.
  */
+export const WARM_INTRO_OPENING = 'A warm hello from SEREN:';
+export const WARM_INTRO_ACCEPTED = 'have both said yes to this introduction.';
+export const WARM_INTRO_FIRST_STEP_LABEL = 'A gentle first step:';
+
 export function buildWarmIntroMessage({
   requesterName, responderName, requesterSharedText = '',
   responderSharedText = '', connectionType = '',
@@ -606,14 +681,128 @@ export function buildWarmIntroMessage({
   const a = first(requesterName);
   const b = first(responderName);
   const lines = [
-    `A warm hello from SEREN: ${a} and ${b} have both said yes to this introduction.`,
+    `${WARM_INTRO_OPENING} ${a} and ${b} ${WARM_INTRO_ACCEPTED}`,
   ];
   const reqShared = String(requesterSharedText || '').trim();
   const respShared = String(responderSharedText || '').trim();
   if (reqShared) lines.push(`${a} shared: “${truncate(reqShared, 140)}”`);
   if (respShared) lines.push(`${b} shared: “${truncate(respShared, 140)}”`);
-  lines.push(`A gentle first step: ${suggestedFirstStep(connectionType || 'one-to-one-conversation')}`);
+  lines.push(`${WARM_INTRO_FIRST_STEP_LABEL} ${suggestedFirstStep(connectionType || 'one-to-one-conversation')}`);
   return lines.join('\n\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Flourishing by Design — optional reflective offers.                 */
+/* These are informational bot messages: skippable, never required for */
+/* session completion, and never presented as answers or authority.     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The real-life completion question the guide asks at natural conversation
+ * conclusions: "What would you like to bring into your real life in the
+ * next 24 hours?" Kept as a single exported constant so copy stays exact
+ * everywhere it is used (chat UI, tests, docs).
+ */
+export const REAL_LIFE_PROMPT_TEXT =
+  'Before you go — What would you like to bring into your real life in the next 24 hours? ' +
+  'No pressure; skip anytime. The wondering itself counts.';
+
+/**
+ * Contexts at which the real-life completion prompt is appropriate
+ * (GUIDE_BEHAVIOR_RULES §9):
+ * - 'brief_approved': the guide chat reaches the proposals stage after the
+ *   member approves their connection brief.
+ * - 'introduction_accepted': an introduction request was accepted (or acted
+ *   on) by either side.
+ */
+export const REAL_LIFE_PROMPT_CONTEXTS = Object.freeze([
+  'brief_approved',
+  'introduction_accepted',
+]);
+
+/**
+ * Build the real-life completion prompt message, or null when the context
+ * is not a natural conversation conclusion.
+ *
+ * Message shape (for the frontend/chat workstream):
+ *   { role: 'bot', kind: 'real_life_prompt', text, skippable: true }
+ * Render like a normal bot text with a Skip affordance. It is informational
+ * only: answering or skipping must never gate session progress, brief
+ * approval, or introduction flow, and the transcript cap logic can count it
+ * as a regular bot text entry.
+ *
+ * @param {string} context one of REAL_LIFE_PROMPT_CONTEXTS, else null
+ * @returns {object|null} the bot message, or null
+ */
+export function realLifePrompt(context) {
+  if (!REAL_LIFE_PROMPT_CONTEXTS.includes(context)) return null;
+  return {
+    role: 'bot',
+    kind: 'real_life_prompt',
+    text: REAL_LIFE_PROMPT_TEXT,
+    skippable: true,
+  };
+}
+
+/**
+ * Agency-first lens offer (GUIDE_BEHAVIOR_RULES §3–§4). An optional bot
+ * message the chat can emit when the member shares something they are
+ * sitting with (a dream, a symbol, a life question): it offers
+ * reflective / symbolic / practical / psychological lenses and returns
+ * interpretive authority to the member. Never asserts a meaning as true.
+ */
+export const LENS_OFFER_TEXT =
+  'Would you like a reflective, symbolic, practical, or psychological lens on this? ' +
+  'One possible interpretation is only one possibility. ' +
+  'You are the best authority on your own experience — what meaning does this hold for you?';
+
+export function lensOffer() {
+  return { role: 'bot', kind: 'text', text: LENS_OFFER_TEXT };
+}
+
+/* ------------------------------------------------------------------ */
+/* Bot-copy audit helper.                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every bot-facing string this module can emit (question prompts and option
+ * labels, first-step suggestions, warm-intro fixed fragments, brief-draft
+ * template samples, reflective offers, and validation error fragments).
+ * Tests assert no banned phrasing appears and every text is ≤ 400 chars.
+ * @returns {Array<string>}
+ */
+export function allBotCopy() {
+  const out = [];
+  for (const def of Object.values(QUESTION_DEFS)) {
+    out.push(def.prompt);
+    if (def.options) for (const o of def.options()) out.push(o.label);
+  }
+  out.push(...Object.values(DEPTH_VALUE_LABELS));
+  out.push(...Object.values(FIRST_STEPS), GENERIC_FIRST_STEP);
+  // Sample with the practice suffix appended.
+  out.push(suggestedFirstStep('meditation-partner', ['meditation']));
+  out.push(REAL_LIFE_PROMPT_TEXT, LENS_OFFER_TEXT);
+  out.push(
+    `${WARM_INTRO_OPENING} Amara and Jon ${WARM_INTRO_ACCEPTED}`,
+    `${WARM_INTRO_FIRST_STEP_LABEL} ${suggestedFirstStep('one-to-one-conversation')}`,
+  );
+  // Brief-draft template samples (fixed fragments around member text).
+  out.push(
+    'A meditation or contemplative partner around meditation — someone open to a thoughtful, mutual exchange.',
+    'Amara is hoping to find: a calm practice partner. Amara can offer: steady listening.',
+    'Amara is open to a meaningful new connection.',
+  );
+  // Validation error fragments (surfaced in 400 API error payloads).
+  out.push(
+    'Unknown question:',
+    'is not open in this session',
+    'is not a valid option for',
+    'must be a string (or empty to skip)',
+    'must be at most 500 characters',
+    'needs a non-empty array of options',
+    'Pick at most 3 for',
+  );
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
