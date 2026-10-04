@@ -5,6 +5,10 @@
 // Extended validators for the current product surface:
 // validateConnectionRequest, validateRespond, validateCircleInput,
 // validateMessageInput, validateReportInput, validatePlanInput.
+// Flourishing by Design: checkConnectionPrefs also validates the onboarding
+// fields (intentions, connectionLevels, topicsOut, privacyLevel,
+// locationRadius, onlineMode, commBoundaries, syncMode) and
+// checkConsentSettings accepts the recFrequency enum.
 
 import {
   INTERESTS, SEEKING,
@@ -13,6 +17,14 @@ import {
   CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, RESPONSE_KINDS, REPORT_REASONS,
   BEACON_SOURCES, BEACON_INTENTIONS, AGENT_VETTING_KEYS,
 } from './constants.js';
+// Flourishing-by-Design onboarding taxonomies (intentions, connection
+// levels, privacy/location/mode/frequency/sync enums) live in
+// onboarding.js; validation imports the wire values from there.
+import {
+  ONBOARDING_INTENTION_VALUES, ONBOARDING_CONNECTION_LEVEL_VALUES,
+  ONBOARDING_PRIVACY_LEVELS, ONBOARDING_LOCATION_RADII,
+  ONBOARDING_ONLINE_MODES, ONBOARDING_REC_FREQUENCIES, ONBOARDING_SYNC_MODES,
+} from './onboarding.js';
 import { getSyncCard } from './sync-deck.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -136,7 +148,13 @@ function checkConnectionPrefs(errors, value, required) {
     push(errors, 'connectionPrefs', 'connectionPrefs must be an object');
     return;
   }
-  const { seeking, availability } = value;
+  const {
+    seeking, availability,
+    // Flourishing by Design onboarding keys (all optional; calm defaults
+    // applied when the member skips the question).
+    intentions, connectionLevels, topicsOut,
+    privacyLevel, locationRadius, onlineMode, commBoundaries, syncMode,
+  } = value;
   if (seeking === undefined || seeking === null) {
     if (required) push(errors, 'connectionPrefs.seeking', 'connectionPrefs.seeking is required');
   } else if (!Array.isArray(seeking)) {
@@ -154,6 +172,41 @@ function checkConnectionPrefs(errors, value, required) {
     } else if (availability.length > 200) {
       push(errors, 'connectionPrefs.availability', 'connectionPrefs.availability must be at most 200 characters');
     }
+  }
+  if (intentions !== undefined) {
+    checkStringArray(errors, intentions, 'connectionPrefs.intentions',
+      { allowed: ONBOARDING_INTENTION_VALUES, min: 0, max: 9 });
+  }
+  if (connectionLevels !== undefined) {
+    checkStringArray(errors, connectionLevels, 'connectionPrefs.connectionLevels',
+      { allowed: ONBOARDING_CONNECTION_LEVEL_VALUES, min: 0, max: 5 });
+  }
+  if (topicsOut !== undefined) {
+    checkStringArray(errors, topicsOut, 'connectionPrefs.topicsOut',
+      { allowed: INTERESTS, min: 0, max: INTERESTS.length });
+  }
+  if (privacyLevel !== undefined && !ONBOARDING_PRIVACY_LEVELS.includes(privacyLevel)) {
+    push(errors, 'connectionPrefs.privacyLevel',
+      `connectionPrefs.privacyLevel must be one of: ${ONBOARDING_PRIVACY_LEVELS.join(', ')}`);
+  }
+  if (locationRadius !== undefined && !ONBOARDING_LOCATION_RADII.includes(locationRadius)) {
+    push(errors, 'connectionPrefs.locationRadius',
+      `connectionPrefs.locationRadius must be one of: ${ONBOARDING_LOCATION_RADII.join(', ')}`);
+  }
+  if (onlineMode !== undefined && !ONBOARDING_ONLINE_MODES.includes(onlineMode)) {
+    push(errors, 'connectionPrefs.onlineMode',
+      `connectionPrefs.onlineMode must be one of: ${ONBOARDING_ONLINE_MODES.join(', ')}`);
+  }
+  if (commBoundaries !== undefined && commBoundaries !== null && commBoundaries !== '') {
+    if (typeof commBoundaries !== 'string') {
+      push(errors, 'connectionPrefs.commBoundaries', 'connectionPrefs.commBoundaries must be a string');
+    } else if (commBoundaries.trim().length > 200) {
+      push(errors, 'connectionPrefs.commBoundaries', 'connectionPrefs.commBoundaries must be at most 200 characters');
+    }
+  }
+  if (syncMode !== undefined && !ONBOARDING_SYNC_MODES.includes(syncMode)) {
+    push(errors, 'connectionPrefs.syncMode',
+      `connectionPrefs.syncMode must be one of: ${ONBOARDING_SYNC_MODES.join(', ')}`);
   }
 }
 
@@ -223,6 +276,15 @@ function checkConsentSettings(errors, value) {
     return;
   }
   for (const key of Object.keys(value)) {
+    // Flourishing by Design: recommendation frequency is an enum, not a
+    // boolean — the calm default ('weekly') is applied at onboarding.
+    if (key === 'recFrequency') {
+      if (!ONBOARDING_REC_FREQUENCIES.includes(value[key])) {
+        push(errors, 'consentSettings.recFrequency',
+          `consentSettings.recFrequency must be one of: ${ONBOARDING_REC_FREQUENCIES.join(', ')}`);
+      }
+      continue;
+    }
     if (!CONSENT_SETTING_KEYS.includes(key)) {
       push(errors, `consentSettings.${key}`, `unknown consent setting "${key}"`);
     } else if (typeof value[key] !== 'boolean') {

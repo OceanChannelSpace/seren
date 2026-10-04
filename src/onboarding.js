@@ -4,12 +4,21 @@
 // express, no network. The server wires these helpers to storage and the
 // existing profile-creation path (validateProfileInput + createProfile).
 //
-// Stage machine:
-//   ob_name -> ob_email -> ob_interests -> ob_intention -> ob_seeking
-//   -> ob_values -> ob_consent -> (profile created, handoff to guide)
+// Stage machine (Flourishing by Design — intention-based, not data-extractive):
+//   ob_name -> ob_email -> ob_intentions -> ob_connection_levels
+//   -> ob_interests -> ob_topics_out -> ob_privacy -> ob_location
+//   -> ob_intention -> ob_seeking -> ob_online_mode -> ob_frequency
+//   -> ob_boundaries -> ob_sync_mode -> ob_values -> ob_consent
+//   -> (profile created, handoff to guide)
 //   ob_consent --"not yet"--> ob_declined --"i'm ready"--> (create)
 //
-// Tone contract: warm and grounded; consent-first; never clinical,
+// Every new question is skippable and optional; only the pre-existing
+// required answers (name, email, interests, intention, seeking) and the
+// introductions consent still gate profile creation. Skipped single-choice
+// questions fall back to the calm defaults in FLOURISHING_DEFAULTS.
+//
+// Tone contract: warm and grounded; agency-first ("you are the best
+// authority on your own experience"); consent-first; never clinical,
 // medical, or therapeutic claims; never psychic certainty or spiritual
 // authority; never numeric scores. Every bot text is <= 400 characters.
 
@@ -19,13 +28,105 @@ import { questionMessage, matchOptions, isSkipText } from './chat.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/* ------------------------------------------------------------------ */
+/* Flourishing by Design — intention-based onboarding taxonomies.      */
+/* Wire values; the frontend (another workstream) renders the matching */
+/* question payloads generically.                                      */
+/* ------------------------------------------------------------------ */
+
+/** Intentions (multi-select, 0–9): why the member is here. */
+export const ONBOARDING_INTENTIONS = Object.freeze([
+  { value: 'spiritual-alignment', label: 'Meet spiritually aligned people' },
+  { value: 'local-community', label: 'Find local community or gatherings' },
+  { value: 'consciousness-meaning', label: 'Explore consciousness and meaning' },
+  { value: 'practice-partner', label: 'Find a meditation, ritual, dreamwork, or reflective-practice partner' },
+  { value: 'research-creative', label: 'Collaborate on research or creative projects' },
+  { value: 'symbolic-synchronicity', label: 'Explore symbolic experiences or synchronicity' },
+  { value: 'mentor-peer', label: 'Find a mentor, peer, or accountability partner' },
+  { value: 'community-service', label: 'Contribute to a community, service, or collective project' },
+  { value: 'ai-guides', label: 'Connect with benevolent AI guides for reflection' },
+]);
+export const ONBOARDING_INTENTION_VALUES = Object.freeze(
+  ONBOARDING_INTENTIONS.map((i) => i.value),
+);
+
+/** Connection levels (multi-select, 0–5): how the member wants to connect. */
+export const ONBOARDING_CONNECTION_LEVELS = Object.freeze([
+  { value: 'ai-conversations', label: 'Reflective AI conversations only' },
+  { value: 'community-discovery', label: 'Community and event discovery' },
+  { value: 'small-groups', label: 'Small group circles' },
+  { value: 'one-to-one', label: 'One-to-one introductions' },
+  { value: 'research-collab', label: 'Research and project collaboration' },
+]);
+export const ONBOARDING_CONNECTION_LEVEL_VALUES = Object.freeze(
+  ONBOARDING_CONNECTION_LEVELS.map((l) => l.value),
+);
+
+/** Privacy level (single-select, default 'community'). */
+export const ONBOARDING_PRIVACY_LEVELS = Object.freeze(['private', 'community', 'discoverable']);
+export const ONBOARDING_PRIVACY_CHOICES = Object.freeze([
+  { value: 'private', label: 'Private — hidden until I accept someone' },
+  { value: 'community', label: 'Community — members can find me' },
+  { value: 'discoverable', label: 'Discoverable — suggest me more widely' },
+]);
+
+/** Location radius (single-select, default 'anywhere'). */
+export const ONBOARDING_LOCATION_RADII = Object.freeze(['local', 'regional', 'anywhere']);
+export const ONBOARDING_LOCATION_CHOICES = Object.freeze([
+  { value: 'local', label: 'Near me' },
+  { value: 'regional', label: 'My wider region' },
+  { value: 'anywhere', label: 'Anywhere' },
+]);
+
+/** Online / offline / hybrid (single-select, default 'hybrid'). */
+export const ONBOARDING_ONLINE_MODES = Object.freeze(['online', 'offline', 'hybrid']);
+export const ONBOARDING_ONLINE_CHOICES = Object.freeze([
+  { value: 'online', label: 'Online' },
+  { value: 'offline', label: 'In person' },
+  { value: 'hybrid', label: 'A mix of both' },
+]);
+
+/** Recommendation frequency (single-select, default 'weekly' — the calm default). */
+export const ONBOARDING_REC_FREQUENCIES = Object.freeze(['daily', 'weekly', 'paused']);
+export const ONBOARDING_REC_CHOICES = Object.freeze([
+  { value: 'daily', label: "Daily — I'm feeling social" },
+  { value: 'weekly', label: 'Weekly — the calm default' },
+  { value: 'paused', label: 'Paused — I need quiet' },
+]);
+
+/** Synchronicity mode (single-select, default 'limited'). */
+export const ONBOARDING_SYNC_MODES = Object.freeze(['on', 'off', 'limited']);
+export const ONBOARDING_SYNC_CHOICES = Object.freeze([
+  { value: 'on', label: 'Open to synchronicity' },
+  { value: 'limited', label: 'Gently, sometimes' },
+  { value: 'off', label: 'Keep things straightforward' },
+]);
+
+/** Calm defaults applied whenever a skippable question is skipped. */
+export const FLOURISHING_DEFAULTS = Object.freeze({
+  privacyLevel: 'community',
+  locationRadius: 'anywhere',
+  onlineMode: 'hybrid',
+  recFrequency: 'weekly',
+  syncMode: 'limited',
+});
+
 /** Stages owned by the onboarding interview (before any profile exists). */
 export const ONBOARDING_STAGES = Object.freeze([
   'ob_name',
   'ob_email',
+  'ob_intentions',
+  'ob_connection_levels',
   'ob_interests',
+  'ob_topics_out',
+  'ob_privacy',
+  'ob_location',
   'ob_intention',
   'ob_seeking',
+  'ob_online_mode',
+  'ob_frequency',
+  'ob_boundaries',
+  'ob_sync_mode',
   'ob_values',
   'ob_consent',
   'ob_declined',
@@ -55,7 +156,16 @@ function chips(values, labelOf) {
   return values.map((v) => ({ value: v, label: labelOf(v) }));
 }
 
+const choiceChips = (choices) => choices.map((c) => ({ value: c.value, label: c.label }));
+
 const INTEREST_OPTIONS = chips(INTERESTS, interestLabel);
+const INTENTION_CHOICES = choiceChips(ONBOARDING_INTENTIONS);
+const LEVEL_CHOICES = choiceChips(ONBOARDING_CONNECTION_LEVELS);
+const PRIVACY_CHOICES = choiceChips(ONBOARDING_PRIVACY_CHOICES);
+const LOCATION_CHOICES = choiceChips(ONBOARDING_LOCATION_CHOICES);
+const ONLINE_CHOICES = choiceChips(ONBOARDING_ONLINE_CHOICES);
+const REC_CHOICES = choiceChips(ONBOARDING_REC_CHOICES);
+const SYNC_CHOICES = choiceChips(ONBOARDING_SYNC_CHOICES);
 const SEEKING_OPTIONS = chips(SEEKING, (v) => SEEKING_LABELS[v] || v);
 const VALUE_OPTIONS = chips(Object.keys(DEPTH_VALUE_LABELS), (v) => DEPTH_VALUE_LABELS[v]);
 
@@ -89,7 +199,8 @@ export function startOnboarding() {
 /**
  * The current question (or statement) for an onboarding stage, used when
  * advancing and when resuming a session. Consent uses quick replies rather
- * than a question message.
+ * than a question message. Single-select questions use input: 'single' —
+ * same payload shape, one new input value the frontend renders generically.
  */
 export function questionForStage(stage, answers = {}) {
   const first = firstNameOf(answers);
@@ -108,6 +219,22 @@ export function questionForStage(stage, answers = {}) {
         type: 'free',
         skippable: false,
       });
+    case 'ob_intentions':
+      return questionMessage({
+        id: 'ob_intentions',
+        prompt: "What draws you here? Choose any that feel true — or skip, and follow your own thread. You're the best authority on your own experience.",
+        type: 'multi',
+        options: INTENTION_CHOICES,
+        skippable: true,
+      });
+    case 'ob_connection_levels':
+      return questionMessage({
+        id: 'ob_connection_levels',
+        prompt: "How would you like connection to happen here? Pick any that sound good — or skip, and we'll keep every door open.",
+        type: 'multi',
+        options: LEVEL_CHOICES,
+        skippable: true,
+      });
     case 'ob_interests':
       return questionMessage({
         id: 'ob_interests',
@@ -115,6 +242,30 @@ export function questionForStage(stage, answers = {}) {
         type: 'multi',
         options: INTEREST_OPTIONS,
         skippable: false,
+      });
+    case 'ob_topics_out':
+      return questionMessage({
+        id: 'ob_topics_out',
+        prompt: "Are there topics you'd rather not see in your suggestions? Choose any, or skip — this simply keeps your space clear.",
+        type: 'multi',
+        options: INTEREST_OPTIONS,
+        skippable: true,
+      });
+    case 'ob_privacy':
+      return questionMessage({
+        id: 'ob_privacy',
+        prompt: 'How visible should your space be? Community is the gentle default — members can find you, but nothing is shared until you approve it. You can change this anytime.',
+        type: 'single',
+        options: PRIVACY_CHOICES,
+        skippable: true,
+      });
+    case 'ob_location':
+      return questionMessage({
+        id: 'ob_location',
+        prompt: "Where should connection live for you? Near you, your wider region, or anywhere. There's no wrong answer — choose what feels right, or skip.",
+        type: 'single',
+        options: LOCATION_CHOICES,
+        skippable: true,
       });
     case 'ob_intention':
       return questionMessage({
@@ -130,6 +281,37 @@ export function questionForStage(stage, answers = {}) {
         type: 'multi',
         options: SEEKING_OPTIONS,
         skippable: false,
+      });
+    case 'ob_online_mode':
+      return questionMessage({
+        id: 'ob_online_mode',
+        prompt: 'How do you like to connect — online, in person, or a mix of both? Skipping keeps it open.',
+        type: 'single',
+        options: ONLINE_CHOICES,
+        skippable: true,
+      });
+    case 'ob_frequency':
+      return questionMessage({
+        id: 'ob_frequency',
+        prompt: "How often would you like gentle suggestions? Weekly is the calm default — daily if you're feeling social, paused if you need quiet. You can change this anytime.",
+        type: 'single',
+        options: REC_CHOICES,
+        skippable: true,
+      });
+    case 'ob_boundaries':
+      return questionMessage({
+        id: 'ob_boundaries',
+        prompt: "Anything you'd like others to know about how you connect? A rhythm, a boundary, a note — 200 characters or fewer. Skip if nothing comes to mind; you can add it later.",
+        type: 'free',
+        skippable: true,
+      });
+    case 'ob_sync_mode':
+      return questionMessage({
+        id: 'ob_sync_mode',
+        prompt: 'SEREN sometimes notices meaningful coincidences — a symbol appearing twice, a theme arriving from two directions. Would you like that gentle kind of synchronicity woven in, or keep things straightforward?',
+        type: 'single',
+        options: SYNC_CHOICES,
+        skippable: true,
       });
     case 'ob_values':
       return questionMessage({
@@ -170,11 +352,68 @@ const START_OVER_RE = /^\s*(start over|restart|begin again)\s*$/i;
 const RECLAIM_YES_RE = /reconnect this device/i;
 const RECLAIM_DIFFERENT_RE = /different email/i;
 
+// "none" is an explicit empty answer for topics-out.
+const NO_TOPICS_RE = /^\s*(none|nothing|no topics)\s*$/i;
+
 function askAgain(stage, answers, note) {
   const q = questionForStage(stage, answers);
   const messages = note ? [botText(note), q] : [q];
   return {
     stage, answers, messages, quickReplies: quickRepliesForStage(stage),
+  };
+}
+
+/**
+ * Advance to the next stage after storing one answered value. Used by the
+ * Flourishing stages; the legacy stages keep their explicit `next` calls.
+ */
+function advance(nextStage, answers, key, value) {
+  const a = { ...answers, [key]: value };
+  return {
+    stage: nextStage,
+    answers: a,
+    messages: [questionForStage(nextStage, a)],
+    quickReplies: quickRepliesForStage(nextStage),
+  };
+}
+
+/** Resolve a single-select answer: first matched option, or null. */
+function resolveSingle(t, options) {
+  const matched = matchOptions(t, { type: 'single', options }) || [];
+  return matched.length ? matched[0] : null;
+}
+
+/**
+ * Assemble the profile-creation payload from collected answers, applying
+ * the calm defaults for anything the member skipped. The new fields ride
+ * in connectionPrefs / consentSettings JSON (no DB column changes):
+ * - connectionPrefs: intentions[], connectionLevels[], topicsOut[],
+ *   privacyLevel, locationRadius, onlineMode, commBoundaries, syncMode
+ * - consentSettings: recFrequency
+ */
+function buildCreate(answers) {
+  return {
+    name: answers.name,
+    email: answers.email,
+    interests: answers.interests || [],
+    intention: answers.intention,
+    seeking: answers.seeking || [],
+    values: answers.values || [],
+    connectionPrefs: {
+      seeking: answers.seeking || [],
+      availability: '',
+      intentions: answers.intentions || [],
+      connectionLevels: answers.connectionLevels || [],
+      topicsOut: answers.topicsOut || [],
+      privacyLevel: answers.privacyLevel || FLOURISHING_DEFAULTS.privacyLevel,
+      locationRadius: answers.locationRadius || FLOURISHING_DEFAULTS.locationRadius,
+      onlineMode: answers.onlineMode || FLOURISHING_DEFAULTS.onlineMode,
+      commBoundaries: answers.commBoundaries || '',
+      syncMode: answers.syncMode || FLOURISHING_DEFAULTS.syncMode,
+    },
+    consentSettings: {
+      recFrequency: answers.recFrequency || FLOURISHING_DEFAULTS.recFrequency,
+    },
   };
 }
 
@@ -185,9 +424,10 @@ function askAgain(stage, answers, note) {
  * @param {string} text trimmed user text
  * @param {{emailTaken(email:string):boolean}} ctx
  * @returns {{stage, answers, messages, quickReplies?} |
- *           {stage, answers, messages, quickReplies?, create:{name,email,interests,intention,seeking,values}}}
+ *           {stage, answers, messages, quickReplies?, create:{name,email,interests,intention,seeking,values,connectionPrefs,consentSettings}}}
  *   When `create` is present the interview is complete and the server
- *   should create the profile through the existing creation path.
+ *   should create the profile through the existing creation path, passing
+ *   create.connectionPrefs and create.consentSettings through.
  */
 export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
   const t = String(text || '').trim();
@@ -240,7 +480,31 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
       }
       const a = { ...answers, email: t };
       delete a.pendingEmail;
-      return next('ob_interests', a, [questionForStage('ob_interests', a)]);
+      return next('ob_intentions', a, [questionForStage('ob_intentions', a)]);
+    }
+
+    case 'ob_intentions': {
+      if (isSkipText(t)) return advance('ob_connection_levels', answers, 'intentions', []);
+      const matched = matchOptions(t, { type: 'multi', options: INTENTION_CHOICES }) || [];
+      if (!matched.length) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap any that feel true above, or skip.");
+      }
+      if (matched.length > 9) {
+        return askAgain(stage, answers,
+          'Pick up to 9 — which feel most true right now?');
+      }
+      return advance('ob_connection_levels', answers, 'intentions', [...new Set(matched)]);
+    }
+
+    case 'ob_connection_levels': {
+      if (isSkipText(t)) return advance('ob_interests', answers, 'connectionLevels', []);
+      const matched = matchOptions(t, { type: 'multi', options: LEVEL_CHOICES }) || [];
+      if (!matched.length) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap any that sound good above, or skip.");
+      }
+      return advance('ob_interests', answers, 'connectionLevels', [...new Set(matched)]);
     }
 
     case 'ob_interests': {
@@ -258,7 +522,43 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
           'Up to 8 — which matter most? Tap your top picks above.');
       }
       const a = { ...answers, interests: [...new Set(matched)] };
-      return next('ob_intention', a, [questionForStage('ob_intention', a)]);
+      return next('ob_topics_out', a, [questionForStage('ob_topics_out', a)]);
+    }
+
+    case 'ob_topics_out': {
+      if (isSkipText(t) || NO_TOPICS_RE.test(t)) {
+        return advance('ob_privacy', answers, 'topicsOut', []);
+      }
+      const matched = matchOptions(t, { type: 'multi', options: INTEREST_OPTIONS }) || [];
+      if (!matched.length) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap any above, say none, or skip.");
+      }
+      return advance('ob_privacy', answers, 'topicsOut', [...new Set(matched)]);
+    }
+
+    case 'ob_privacy': {
+      if (isSkipText(t)) {
+        return advance('ob_location', answers, 'privacyLevel', FLOURISHING_DEFAULTS.privacyLevel);
+      }
+      const picked = resolveSingle(t, PRIVACY_CHOICES);
+      if (!picked) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap one above, or skip for the gentle default.");
+      }
+      return advance('ob_location', answers, 'privacyLevel', picked);
+    }
+
+    case 'ob_location': {
+      if (isSkipText(t)) {
+        return advance('ob_intention', answers, 'locationRadius', FLOURISHING_DEFAULTS.locationRadius);
+      }
+      const picked = resolveSingle(t, LOCATION_CHOICES);
+      if (!picked) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap one above, or skip.");
+      }
+      return advance('ob_intention', answers, 'locationRadius', picked);
     }
 
     case 'ob_intention': {
@@ -285,7 +585,52 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
           "I didn't catch that — which of these fits best? Tap above, or name it.");
       }
       const a = { ...answers, seeking: [...new Set(matched)] };
-      return next('ob_values', a, [questionForStage('ob_values', a)]);
+      return next('ob_online_mode', a, [questionForStage('ob_online_mode', a)]);
+    }
+
+    case 'ob_online_mode': {
+      if (isSkipText(t)) {
+        return advance('ob_frequency', answers, 'onlineMode', FLOURISHING_DEFAULTS.onlineMode);
+      }
+      const picked = resolveSingle(t, ONLINE_CHOICES);
+      if (!picked) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap one above, or skip to keep it open.");
+      }
+      return advance('ob_frequency', answers, 'onlineMode', picked);
+    }
+
+    case 'ob_frequency': {
+      if (isSkipText(t)) {
+        return advance('ob_boundaries', answers, 'recFrequency', FLOURISHING_DEFAULTS.recFrequency);
+      }
+      const picked = resolveSingle(t, REC_CHOICES);
+      if (!picked) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap one above, or skip for the weekly calm default.");
+      }
+      return advance('ob_boundaries', answers, 'recFrequency', picked);
+    }
+
+    case 'ob_boundaries': {
+      if (isSkipText(t)) return advance('ob_sync_mode', answers, 'commBoundaries', '');
+      if (t.length > 200) {
+        return askAgain(stage, answers,
+          'Could you keep it to 200 characters or fewer?');
+      }
+      return advance('ob_sync_mode', answers, 'commBoundaries', t);
+    }
+
+    case 'ob_sync_mode': {
+      if (isSkipText(t)) {
+        return advance('ob_values', answers, 'syncMode', FLOURISHING_DEFAULTS.syncMode);
+      }
+      const picked = resolveSingle(t, SYNC_CHOICES);
+      if (!picked) {
+        return askAgain(stage, answers,
+          "I didn't catch that — tap one above, or skip.");
+      }
+      return advance('ob_values', answers, 'syncMode', picked);
     }
 
     case 'ob_values': {
@@ -314,14 +659,7 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
       if (YES_RE.test(t)) {
         return {
           ...next('ob_consent', answers, []),
-          create: {
-            name: answers.name,
-            email: answers.email,
-            interests: answers.interests || [],
-            intention: answers.intention,
-            seeking: answers.seeking || [],
-            values: answers.values || [],
-          },
+          create: buildCreate(answers),
         };
       }
       return askAgain(stage, answers,
@@ -332,14 +670,7 @@ export function handleOnboardingTurn(stage, answers, text, ctx = {}) {
       if (YES_RE.test(t) && !NO_RE.test(t)) {
         return {
           ...next('ob_declined', answers, []),
-          create: {
-            name: answers.name,
-            email: answers.email,
-            interests: answers.interests || [],
-            intention: answers.intention,
-            seeking: answers.seeking || [],
-            values: answers.values || [],
-          },
+          create: buildCreate(answers),
         };
       }
       return next('ob_declined', answers,

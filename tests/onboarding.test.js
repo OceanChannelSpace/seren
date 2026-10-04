@@ -3,9 +3,11 @@
 //   POST /api/onboarding/chat/start {} -> { session:{id, stage}, messages, quickReplies? }
 //   POST /api/onboarding/chat/message {sessionId, text} -> same shape (+ profileCreated on consent)
 //   GET  /api/onboarding/chat/session/:id -> { session, transcript, question?, quickReplies? }
-// The interview (ob_name -> ob_email -> ob_interests -> ob_intention ->
-// ob_seeking -> ob_values -> ob_consent) collects every required profile
-// field before any profile exists. On explicit consent the profile is
+// The interview (ob_name -> ob_email -> ob_intentions -> ob_connection_levels
+// -> ob_interests -> ob_topics_out -> ob_privacy -> ob_location ->
+// ob_intention -> ob_seeking -> ob_online_mode -> ob_frequency ->
+// ob_boundaries -> ob_sync_mode -> ob_values -> ob_consent) collects every
+// required profile field before any profile exists. On explicit consent the profile is
 // created through the standard creation path and the SAME session
 // continues into the guide flow (follow-ups -> brief -> proposals).
 // Declining consent creates nothing and shares nothing.
@@ -80,10 +82,19 @@ async function interviewToConsent(email) {
   const sid = s.json.session.id;
   const say = async (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
   assert.equal((await say('Maya Chen')).json.session.stage, 'ob_email');
-  assert.equal((await say(email)).json.session.stage, 'ob_interests');
-  assert.equal((await say('Meditation, Tarot')).json.session.stage, 'ob_intention');
+  assert.equal((await say(email)).json.session.stage, 'ob_intentions');
+  assert.equal((await say('skip')).json.session.stage, 'ob_connection_levels');
+  assert.equal((await say('skip')).json.session.stage, 'ob_interests');
+  assert.equal((await say('Meditation, Tarot')).json.session.stage, 'ob_topics_out');
+  assert.equal((await say('skip')).json.session.stage, 'ob_privacy');
+  assert.equal((await say('skip')).json.session.stage, 'ob_location');
+  assert.equal((await say('skip')).json.session.stage, 'ob_intention');
   assert.equal((await say('I am seeking a calm meditation partner to sit with weekly.')).json.session.stage, 'ob_seeking');
-  assert.equal((await say('Practice partner')).json.session.stage, 'ob_values');
+  assert.equal((await say('Practice partner')).json.session.stage, 'ob_online_mode');
+  assert.equal((await say('skip')).json.session.stage, 'ob_frequency');
+  assert.equal((await say('skip')).json.session.stage, 'ob_boundaries');
+  assert.equal((await say('skip')).json.session.stage, 'ob_sync_mode');
+  assert.equal((await say('skip')).json.session.stage, 'ob_values');
   const consentTurn = await say('Grounded, Curious');
   assert.equal(consentTurn.json.session.stage, 'ob_consent');
   return { sid, say };
@@ -127,7 +138,7 @@ test('bad email is rejected and stays on the email stage', async () => {
   assert.equal(bad.json.session.stage, 'ob_email');
   assert.ok(bad.json.messages.some((m) => /email/i.test(m.text || '')));
   const ok = await say(uniqueEmail());
-  assert.equal(ok.json.session.stage, 'ob_interests');
+  assert.equal(ok.json.session.stage, 'ob_intentions');
 });
 
 test('unmatched interests are rejected and stay on the interests stage', async () => {
@@ -136,10 +147,12 @@ test('unmatched interests are rejected and stay on the interests stage', async (
   const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
   await say('Jo');
   await say(uniqueEmail());
+  await say('skip'); // ob_intentions
+  await say('skip'); // ob_connection_levels
   const bad = await say('quantum banana farming');
   assert.equal(bad.json.session.stage, 'ob_interests');
   const ok = await say('Yoga, journaling');
-  assert.deepEqual(ok.json.session.stage, 'ob_intention');
+  assert.deepEqual(ok.json.session.stage, 'ob_topics_out');
   assert.deepEqual(ok.json.messages[0].kind, 'question');
 });
 
@@ -149,7 +162,12 @@ test('short intentions are rejected and stay on the intention stage', async () =
   const say = (text) => api('POST', '/api/onboarding/chat/message', { sessionId: sid, text });
   await say('Jo');
   await say(uniqueEmail());
+  await say('skip'); // ob_intentions
+  await say('skip'); // ob_connection_levels
   await say('Yoga');
+  await say('skip'); // ob_topics_out
+  await say('skip'); // ob_privacy
+  await say('skip'); // ob_location
   const short = await say('hi');
   assert.equal(short.json.session.stage, 'ob_intention');
   const ok = await say('Looking for a gentle yoga buddy for quiet morning practice together.');
@@ -184,7 +202,7 @@ test('an email that already has a profile is rejected during onboarding', async 
   assert.equal(dup.json.session.stage, 'ob_email');
   assert.ok(dup.json.messages.some((m) => /already has a SEREN space/i.test(m.text || '')));
   // ...but a fresh email moves on.
-  assert.equal((await say(uniqueEmail())).json.session.stage, 'ob_interests');
+  assert.equal((await say(uniqueEmail())).json.session.stage, 'ob_intentions');
 });
 
 // ---------- consent gating ----------
@@ -248,9 +266,9 @@ test('resume replays the transcript and re-asks the current question', async () 
   await say(email);
   const r = await api('GET', `/api/onboarding/chat/session/${sid}`);
   assert.equal(r.status, 200);
-  assert.equal(r.json.session.stage, 'ob_interests');
+  assert.equal(r.json.session.stage, 'ob_intentions');
   assert.ok(r.json.transcript.length >= 4);
-  assert.equal(r.json.question.questionId, 'ob_interests');
+  assert.equal(r.json.question.questionId, 'ob_intentions');
   assert.ok(r.json.question.options.length > 0);
 });
 
@@ -393,7 +411,7 @@ test('choosing a different email continues the interview cleanly', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.json.session.stage, 'ob_email');
   const r2 = await say(fresh);
-  assert.equal(r2.json.session.stage, 'ob_interests', 'a fresh email should advance the interview');
+  assert.equal(r2.json.session.stage, 'ob_intentions', 'a fresh email should advance the interview');
 });
 
 test('resume does not duplicate the current question', async () => {
