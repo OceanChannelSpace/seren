@@ -11,6 +11,7 @@ import { get } from '../state.js';
 import { STORAGE_PREFIX } from '../state.js';
 import * as api from '../api.js';
 import { esc, el, card, announce, toast } from '../ui.js';
+import { proposalCard } from './proposal-card.js';
 
 const SESSION_KEY = `${STORAGE_PREFIX}.chatSessionId`;
 const MAX_SEND = 2000;
@@ -297,9 +298,8 @@ export async function renderChat(mount, opts = {}) {
   async function renderProposals(proposals, briefId) {
     const list = (proposals || []).slice(0, 3);
     if (!list.length) return;
-    // Dynamic import: home.js statically imports this module (renderChat),
-    // so a static import here would create a cycle.
-    const { proposalCard } = await import('./home.js');
+    // proposalCard lives in a shared module (no import cycle: home.js also
+    // imports it statically from there).
     for (const p of list) thread.appendChild(proposalCard(p, briefId));
     scroll();
     announce(list.length === 1 ? 'One introduction suggestion.' : `${list.length} introduction suggestions.`);

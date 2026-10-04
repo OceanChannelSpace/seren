@@ -201,6 +201,10 @@ test('messaging opens only after mutual acceptance; blocked pairs cannot message
 
   const thread = await api('GET', `/api/introductions/${id}/messages`, undefined, b);
   assert.equal(thread.status, 200);
+  // The conversation header needs the other participant's privacy-aware
+  // view — b should see a's name, never a "Someone" fallback.
+  assert.ok(thread.json.introduction.other, 'messages endpoint attaches the other participant view');
+  assert.equal(thread.json.introduction.other.name, 'Msg Ava');
   // SEREN posts a warm-intro system message on acceptance, then the user message.
   assert.equal(thread.json.messages.length, 2);
   assert.equal(thread.json.messages[0].senderId, 0);

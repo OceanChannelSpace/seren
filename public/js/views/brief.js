@@ -5,7 +5,7 @@
 
 import * as api from '../api.js';
 import { set } from '../state.js';
-import { proposalCard } from './home.js';
+import { proposalCard } from './proposal-card.js';
 import {
   esc, el, pageShell, errorBanner, infoBanner, loading, emptyState, card,
   field, textArea, toast, announce, pluralize, confirmDialog, friendlyError,

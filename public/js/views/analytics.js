@@ -6,7 +6,7 @@
 
 import * as api from '../api.js';
 import {
-  el, esc, pageShell, errorBanner, loading, emptyState,
+  el, esc, pageShell, errorBanner, loading, emptyState, pluralize,
 } from '../ui.js';
 
 function pctOf(v) {
@@ -33,7 +33,7 @@ function buildCards(data, grid) {
     grid.appendChild(statCard(
       pctOf(rwa.pct),
       'Real-world follow-through',
-      `Of members who checked in, this share said SEREN helped them take a meaningful action in real life in the last 30 days.${rwa.n ? ` Based on ${rwa.n} check-ins.` : ''} This is the number that matters most.`,
+      `Of members who checked in, this share said SEREN helped them take a meaningful action in real life in the last 30 days.${rwa.n ? ` Based on ${pluralize(rwa.n, 'check-in')}.` : ''} This is the number that matters most.`,
     ));
   }
   const iq = data.introductionQuality || {};
@@ -101,7 +101,7 @@ function buildCards(data, grid) {
     grid.appendChild(statCard(
       pctOf(na.pctMorePresent),
       'Left more present',
-      `Of members who checked in, this share said time on SEREN left them more present and focused rather than scattered. Based on ${na.n} check-ins. If this drops, the product is harming attention.`,
+      `Of members who checked in, this share said time on SEREN left them more present and focused rather than scattered. Based on ${pluralize(na.n, 'check-in')}. If this drops, the product is harming attention.`,
     ));
   }
   const iu = ati.intentionalUse || {};

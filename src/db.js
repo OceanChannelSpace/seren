@@ -698,6 +698,30 @@ if (userVersion < 17) {
   db.exec('PRAGMA user_version = 17');
 }
 
+// v18: remove demo seed profiles. The October QA pass confirmed the only
+// people who should exist in the database are real members, so every
+// profile with is_seed = 1 is deleted with the same related-row cleanup as
+// deleteProfile (introductions closed out, circles, agents, connection
+// plans, decline blocks, guide/chat sessions, blocks, reports, saved items,
+// passes, messages, briefs, plus the ON DELETE CASCADE tables). Hidden
+// QA/test records (is_hidden = 1, e.g. "QA Tester") are NOT touched — that
+// removal decision is still pending.
+function migrateToV18() {
+  const seeds = db.prepare('SELECT id, name FROM profiles WHERE is_seed = 1 AND id > 0').all();
+  if (!seeds.length) return;
+  const removed = [];
+  for (const s of seeds) {
+    if (deleteProfile(s.id)) removed.push(s.name);
+  }
+  if (removed.length) {
+    console.log(`[migrate] v18: removed ${removed.length} demo seed profile(s): ${removed.join(', ')}`);
+  }
+}
+if (userVersion < 18) {
+  migrateToV18();
+  db.exec('PRAGMA user_version = 18');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {

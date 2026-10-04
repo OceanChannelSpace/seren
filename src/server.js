@@ -1376,8 +1376,15 @@ app.get('/api/introductions/:id/messages', (req, res) => {
   if (!profile) return;
   const intro = requireMessagingOpen(req, res, profile);
   if (!intro) return;
+  // Attach the privacy-aware view of the other participant, same as the
+  // introductions list endpoint, so the conversation header shows their
+  // name instead of falling back to "Someone".
+  const otherId = intro.requesterId === profile.id ? intro.proposedId : intro.requesterId;
   res.json({
-    introduction: toWireIntroduction(intro),
+    introduction: {
+      ...toWireIntroduction(intro),
+      other: getVisibleProfile(otherId, profile.id),
+    },
     plan: getConnectionPlan(intro.id),
     messages: listMessages(intro.id),
   });
