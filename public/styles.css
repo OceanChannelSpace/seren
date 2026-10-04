@@ -1,7 +1,9 @@
-/* SEREN — "Sunlit Channel" theme.
-   Light, high-vibrational, on-scheme with Ocean Channel Space: pale aqua
-   washes, deep ocean-teal ink, water-teal accents. Calm whitespace, airy,
-   trustworthy. Explicitly NOT dark.
+/* SEREN — "Sunlit Channel" theme, second pass.
+   Light, high-vibrational, on-scheme with Ocean Channel Space: light
+   sea-green washes (#d9efe7 / #c9e8dc), deep ocean-teal ink (#083f41),
+   water-teal accents, and the OCS signature depth fade — deep water-green
+   dissolving into transparency behind the hero and page top. Calm
+   whitespace, airy, trustworthy. Explicitly NOT dark.
 
    Token aliasing: the original component classes were written against the
    old "Deep Channel" token names (--seafoam, --ice, --mist, etc.). Those
@@ -11,27 +13,29 @@
 :root {
   /* page */
   --abyss: #f8fffd;        /* mint-tinted near-white (Ocean Channel button white) */
-  --deep: #e8f2ee;         /* pale aqua wash (derived from #28675f) */
+  --deep: #d9efe7;         /* light sea-green wash — clearly green at a glance */
+  --wash-green: #d9efe7;   /* named light sea-green surface */
+  --wash-green-deep: #c9e8dc; /* deeper sea-green for bands and dividers */
   --teal: #2f7d6e;         /* lightened water teal for interactive elements */
   --glow-teal: #174b48;    /* deep water teal */
   /* accents */
   --seafoam: #174b48;      /* deep teal text accent */
   --seafoam-deep: #28675f; /* primary water teal */
-  --seafoam-pale: rgba(40, 103, 95, 0.09);
+  --seafoam-pale: rgba(40, 103, 95, 0.14);
   --gold: #2f7d6e;         /* retired gold name, repointed to teal */
-  --gold-soft: rgba(40, 103, 95, 0.10);
+  --gold-soft: rgba(40, 103, 95, 0.14);
   --gold-line: rgba(23, 75, 72, 0.32);
   --gold-deep: #174b48;
   /* text */
   --ice: #083f41;          /* deep ocean teal ink (Ocean Channel button text) */
-  --mist: #4e6f69;         /* muted teal-gray secondary */
+  --mist: #43655e;         /* muted teal-gray secondary, deepened for green washes */
   --mist-dim: #84a09a;     /* dimmer teal-gray */
   /* lines & surfaces */
   --line: rgba(23, 75, 72, 0.24);
   --line-soft: rgba(23, 75, 72, 0.13);
   --card: #ffffff;         /* clean white card */
   --card-solid: #ffffff;
-  --card-tint: #f1f8f6;
+  --card-tint: #dff0e8;
   --field: #ffffff;        /* input fields */
   /* danger */
   --danger: #a9442f;
@@ -74,6 +78,8 @@ body::after {
 /* soft surface light from above, pale aqua washes */
 body::before {
   background:
+    /* OCS depth fade: deep water-green dissolving downward into transparency */
+    linear-gradient(to bottom, rgba(8, 67, 61, 0.20), rgba(8, 67, 61, 0.06) 18%, transparent 38%),
     radial-gradient(1100px 520px at 50% -120px, rgba(150, 205, 190, 0.35), transparent 65%),
     radial-gradient(800px 420px at 12% 108%, rgba(40, 103, 95, 0.10), transparent 60%),
     radial-gradient(900px 480px at 88% 104%, rgba(64, 140, 124, 0.12), transparent 60%),
@@ -165,7 +171,7 @@ main.container { padding-top: 2.5rem; padding-bottom: 4rem; }
 
 .site-header {
   position: sticky; top: 0; z-index: 50;
-  background: rgba(250, 245, 234, 0.88);
+  background: rgba(217, 239, 231, 0.88);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line-soft);
@@ -265,7 +271,14 @@ h3 { font-size: 1.2rem; margin: 0 0 0.5rem; }
   text-align: center;
   padding: 3.5rem 1rem 4rem;
   background:
+    linear-gradient(to bottom, rgba(23, 75, 72, 0.16), transparent 72%),
     radial-gradient(640px 260px at 50% 0%, rgba(120, 185, 168, 0.30), transparent 70%);
+  border-radius: var(--radius);
+}
+
+/* OCS-style depth band: deep green dissolving, for section dividers / feature bands */
+.depth-band {
+  background: linear-gradient(to bottom, rgba(23, 75, 72, 0.14), rgba(23, 75, 72, 0.03));
   border-radius: var(--radius);
 }
 .hero .sigil {
@@ -399,9 +412,9 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 }
 .chip:hover { border-color: var(--gold-deep); box-shadow: 0 2px 12px rgba(40, 103, 95, 0.18); }
 .chip[aria-pressed="true"] {
-  background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
+  background: linear-gradient(135deg, #b7e3cf, var(--seafoam-deep));
   border-color: var(--gold-deep);
-  color: #3b2f16; font-weight: 700;
+  color: #083f41; font-weight: 700;
   box-shadow: 0 4px 18px rgba(40, 103, 95, 0.35);
 }
 
@@ -448,8 +461,8 @@ legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; color: var(--ice)
 .btn[disabled] { opacity: 0.6; cursor: wait; }
 
 .btn-primary {
-  background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
-  color: #3b2f16;
+  background: linear-gradient(135deg, #b7e3cf, var(--seafoam-deep));
+  color: #083f41;
   box-shadow: 0 6px 26px rgba(40, 103, 95, 0.35);
 }
 .btn-primary:hover:not([disabled]) { box-shadow: 0 8px 32px rgba(40, 103, 95, 0.45); }
@@ -466,7 +479,7 @@ legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; color: var(--ice)
 
 .btn-danger { background: transparent; border-color: rgba(169, 68, 47, 0.5); color: var(--danger); }
 .btn-danger:hover { background: var(--danger-bg); }
-.btn-danger.btn-armed { background: var(--danger); border-color: var(--danger); color: #fff7ea; }
+.btn-danger.btn-armed { background: var(--danger); border-color: var(--danger); color: #ffffff; }
 
 .btn-small { padding: 0.4rem 1rem; font-size: 0.88rem; }
 
@@ -485,8 +498,8 @@ legend { font-weight: 600; padding: 0; margin-bottom: 0.25rem; color: var(--ice)
 }
 .seg button + button { border-left: 1px solid var(--line-soft); }
 .seg button[aria-pressed="true"] {
-  background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
-  color: #3b2f16;
+  background: linear-gradient(135deg, #b7e3cf, var(--seafoam-deep));
+  color: #083f41;
 }
 
 /* ---------- match card ---------- */
@@ -718,9 +731,9 @@ select.input {
 .avatar {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.6rem; height: 2.6rem; border-radius: 50%;
-  background: linear-gradient(135deg, #c89b3a, var(--teal));
+  background: linear-gradient(135deg, #b7e3cf, var(--teal));
   border: 1px solid var(--gold-line);
-  color: #3b2f16; font-weight: 700; font-size: 1.15rem;
+  color: #083f41; font-weight: 700; font-size: 1.15rem;
   flex: none;
 }
 .avatar-lg { width: 4rem; height: 4rem; font-size: 1.8rem; }
@@ -924,7 +937,7 @@ select.input {
   .bottom-nav {
     display: flex;
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
-    background: rgba(250, 245, 234, 0.95);
+    background: rgba(217, 239, 231, 0.95);
     backdrop-filter: blur(14px);
     border-top: 1px solid var(--line);
     padding: 0.4rem 0 calc(0.4rem + env(safe-area-inset-bottom));
@@ -1085,9 +1098,9 @@ body.beta-locked .site-footer { display: none; }
   font-weight: 600;
 }
 .chip-select[aria-pressed="true"] {
-  background: linear-gradient(135deg, #c89b3a, var(--seafoam-deep));
+  background: linear-gradient(135deg, #b7e3cf, var(--seafoam-deep));
   border-color: var(--gold-deep);
-  color: #3b2f16;
+  color: #083f41;
 }
 .chat-send-row { margin-top: 0.7rem; }
 
