@@ -671,6 +671,33 @@ if (userVersion < 16) {
   db.exec('PRAGMA user_version = 16');
 }
 
+// v17: "Digital Sapiens" layer — attention integrity, grounded in Jack
+// Probert's Digital Sapiens Experiment 2 (20 Harvard students, 3 days
+// without instant messaging, Sep 2026). introductions gains a
+// moved_to_real_life flag: a member-declared "we took this beyond the
+// app" state, after which SEREN stops nudging about that connection.
+// attention_opens records coarse app-open origins so host analytics can
+// distinguish intentional opens from notification-driven ones (SEREN
+// sends no engagement notifications by design, so 'intentional' is the
+// honest default; the column exists so any future entry point is
+// measured separately rather than silently blended in).
+function migrateToV17() {
+  addColumnIfMissing('introductions', 'moved_to_real_life', 'INTEGER NOT NULL DEFAULT 0');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS attention_opens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      origin TEXT NOT NULL DEFAULT 'unknown',
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_attention_opens_profile ON attention_opens(profile_id)');
+}
+if (userVersion < 17) {
+  migrateToV17();
+  db.exec('PRAGMA user_version = 17');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -780,6 +807,9 @@ function toIntroduction(row) {
     // never an outcome claim) plus whether they marked it done.
     realLifeIntention: row.real_life_intention || '',
     intentionCompleted: row.intention_completed === 1,
+    // v17 (Digital Sapiens): member-declared "moved to real life" — the
+    // app steps back and stops nudging about this connection.
+    movedToRealLife: row.moved_to_real_life === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1656,6 +1686,54 @@ export function completeIntroductionRealLifeIntention(id) {
 }
 
 /**
+ * Mark an introduction as moved to real life (Digital Sapiens P6): the
+ * member declares the connection now lives beyond the app, and SEREN
+ * steps back — no further nudges about this connection. Consent-first
+ * and reversible only by ending the connection; the flag itself is a
+ * quiet state, never a claim about outcomes.
+ */
+export function markIntroductionMovedToRealLife(id) {
+  db.prepare(`
+    UPDATE introductions SET moved_to_real_life = 1, updated_at = ? WHERE id = ?
+  `).run(new Date().toISOString(), id);
+  return getIntroduction(id);
+}
+
+/** Valid coarse origins for an app open (Digital Sapiens attention analytics). */
+export const ATTENTION_ORIGINS = Object.freeze([
+  'intentional',   // member opened the app on purpose
+  'notification',  // arrived via a notification tap
+  'reengagement', // arrived via a re-engagement prompt
+  'unknown',      // origin not determined
+]);
+
+/** Record one app open with its coarse origin. */
+export function recordAttentionOpen(profileId, origin) {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO attention_opens (profile_id, origin, created_at)
+    VALUES (?, ?, ?)
+  `).run(profileId, origin, now);
+  return Number(result.lastInsertRowid);
+}
+
+/** 30-day app-open counts by origin for host attention analytics. */
+export function getAttentionOpenAggregates() {
+  const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+  const rows = db.prepare(`
+    SELECT origin, COUNT(*) AS n
+    FROM attention_opens
+    WHERE created_at >= ?
+    GROUP BY origin
+  `).all(since);
+  const byOrigin = { intentional: 0, notification: 0, reengagement: 0, unknown: 0 };
+  for (const r of rows) {
+    if (r.origin in byOrigin) byOrigin[r.origin] = r.n;
+  }
+  return byOrigin;
+}
+
+/**
  * Raw aggregates for the host analytics view. All check-in metrics use a
  * trailing-30-day window; introduction feedback aggregates all feedback on
  * record (n is small and quality answers stay relevant).
@@ -1697,7 +1775,18 @@ export function getFlourishingAggregates() {
       AND status != 'open'
       AND updated_at IS NOT NULL AND updated_at != ''
   `).get(since);
-  return { yesByKey, answeredByKey, connectedHigh, feedback, incidents, resolution };
+  // Digital Sapiens: distribution of the net_attention choice answers
+  // ('more_present' | 'about_same' | 'more_scattered') for attention
+  // analytics. Distinct profiles per answer, trailing 30 days like the
+  // other check-in metrics.
+  const choiceDist = db.prepare(`
+    SELECT question_key AS questionKey, answer_text AS answer,
+           COUNT(DISTINCT profile_id) AS n
+    FROM flourishing_checkins
+    WHERE created_at >= ? AND question_key = 'net_attention'
+    GROUP BY question_key, answer_text
+  `).all(since);
+  return { yesByKey, answeredByKey, connectedHigh, feedback, incidents, resolution, choiceDist };
 }
 
 // ---------- host assists (Human Mode) ----------

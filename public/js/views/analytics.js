@@ -92,6 +92,46 @@ function buildCards(data, grid) {
       'Share of members who felt the SEREN guide was appropriately humble and non-authoritative — no fate, no certainty, no guru voice.',
     ));
   }
+  // Digital Sapiens attention impact: does SEREN itself leave people more
+  // present, intentional, and pulled toward real life?
+  const ati = data.attentionImpact || {};
+  const na = ati.netAttention || {};
+  if (na.n) {
+    shown++;
+    grid.appendChild(statCard(
+      pctOf(na.pctMorePresent),
+      'Left more present',
+      `Of members who checked in, this share said time on SEREN left them more present and focused rather than scattered. Based on ${na.n} check-ins. If this drops, the product is harming attention.`,
+    ));
+  }
+  const iu = ati.intentionalUse || {};
+  if (iu.pct !== undefined && iu.pct !== null) {
+    shown++;
+    grid.appendChild(statCard(
+      pctOf(iu.pct),
+      'Opened with purpose',
+      'Share who opened SEREN with a clear purpose and left when done — intentional use, not compulsive checking.',
+    ));
+  }
+  const rlp = ati.realLifePull || {};
+  if (rlp.pct !== undefined && rlp.pct !== null) {
+    shown++;
+    grid.appendChild(statCard(
+      pctOf(rlp.pct),
+      'Pulled toward real life',
+      'Share who said SEREN nudged them toward a real-world connection or action today.',
+    ));
+  }
+  const opens = ati.opens30d || {};
+  const openTotal = (opens.intentional || 0) + (opens.notification || 0) + (opens.reengagement || 0) + (opens.unknown || 0);
+  if (openTotal > 0) {
+    shown++;
+    grid.appendChild(statCard(
+      pctOf(Math.round((100 * (opens.intentional || 0)) / openTotal)),
+      'Intentional opens',
+      'Share of app opens in the last 30 days that members made on purpose, versus arriving via notification or re-engagement. SEREN sends no engagement notifications by design.',
+    ));
+  }
   return shown;
 }
 

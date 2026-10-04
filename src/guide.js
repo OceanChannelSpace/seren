@@ -75,6 +75,21 @@
  *    introduction is accepted or acted on), offer the optional, skippable
  *    real-life prompt (see realLifePrompt()): "What would you like to
  *    bring into your real life in the next 24 hours?"
+ * 10. DIGITAL SAPIENS — ATTENTION INTEGRITY
+ *    Informed by Jack Probert's Digital Sapiens Experiment 2 (20 Harvard
+ *    students, 3 days without instant messaging, Sep 2026): technology
+ *    should empower, connect, and elevate — never diminish. Concretely:
+ *    - Never manufacture urgency: no countdowns, scarcity, "act now",
+ *      or "don't miss out" framing.
+ *    - Never guilt-trip about inactivity: no "we miss you", "you haven't
+ *      been here", or comeback nudges of any kind.
+ *    - Affirm reply-when-you-want norms: members may reply slowly, or not
+ *      at all, without apology. Slow is fine.
+ *    - Celebrate disconnection and real-world follow-through as wins —
+ *      less time here and more time in life is the goal.
+ *    - Distinguish logistics from connection: coordination (when/where/how)
+ *      is plumbing; the human connection is the point. Never let the two
+ *      be treated as the same kind of message.
  * ========================================================================== */
 
 import {
@@ -745,6 +760,49 @@ export function realLifePrompt(context) {
 }
 
 /**
+ * Digital Sapiens attention-integrity rules (GUIDE_BEHAVIOR_RULES §10),
+ * exported so tests and future contributors can assert on them. Grounded
+ * in Jack Probert's Digital Sapiens Experiment 2: technology should
+ * empower, connect, and elevate — never diminish attention or connection.
+ */
+export const ATTENTION_INTEGRITY_RULES = Object.freeze([
+  'Never manufacture urgency: no countdowns, scarcity, "act now", or "don\'t miss out" framing.',
+  'Never guilt-trip about inactivity: no "we miss you" or comeback nudges of any kind.',
+  'Affirm reply-when-you-want norms: members may reply slowly, or not at all, without apology.',
+  'Celebrate disconnection and real-world follow-through as wins.',
+  'Distinguish logistics from connection: coordination is plumbing; the human connection is the point.',
+]);
+
+/**
+ * Re-engagement phrasing the guide must never emit (GUIDE_BEHAVIOR_RULES
+ * §10). Tested case-insensitively against all bot copy.
+ */
+export const REENGAGEMENT_BANNED = Object.freeze([
+  'we miss you',
+  'we\'ve missed you',
+  'you haven\'t been here',
+  'come back soon',
+  'don\'t miss out',
+  'last chance',
+  'act now',
+  'hurry',
+]);
+
+/**
+ * The real-life handoff message (GUIDE_BEHAVIOR_RULES §9–§10): offered when
+ * a member marks an accepted introduction as moved to real life. The app
+ * steps back: no more nudges about this connection. Celebrates leaving.
+ * Kept as an exported constant so copy stays exact everywhere.
+ */
+export const REAL_LIFE_HANDOFF_TEXT =
+  'Beautiful — take this one beyond the screen. If you like, swap a preferred way to reach each other, or plan something in real life. ' +
+  'SEREN will step back now and won\'t nudge you about this connection again. The good stuff happens out there.';
+
+export function realLifeHandoff() {
+  return { role: 'bot', kind: 'real_life_handoff', text: REAL_LIFE_HANDOFF_TEXT, skippable: true };
+}
+
+/**
  * Agency-first lens offer (GUIDE_BEHAVIOR_RULES §3–§4). An optional bot
  * message the chat can emit when the member shares something they are
  * sitting with (a dream, a symbol, a life question): it offers
@@ -781,7 +839,7 @@ export function allBotCopy() {
   out.push(...Object.values(FIRST_STEPS), GENERIC_FIRST_STEP);
   // Sample with the practice suffix appended.
   out.push(suggestedFirstStep('meditation-partner', ['meditation']));
-  out.push(REAL_LIFE_PROMPT_TEXT, LENS_OFFER_TEXT);
+  out.push(REAL_LIFE_PROMPT_TEXT, REAL_LIFE_HANDOFF_TEXT, LENS_OFFER_TEXT);
   out.push(
     `${WARM_INTRO_OPENING} Amara and Jon ${WARM_INTRO_ACCEPTED}`,
     `${WARM_INTRO_FIRST_STEP_LABEL} ${suggestedFirstStep('one-to-one-conversation')}`,

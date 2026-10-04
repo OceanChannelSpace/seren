@@ -104,11 +104,13 @@ test('GET /api/flourishing/questions returns the exact question set', async () =
   const r = await api('GET', '/api/flourishing/questions', undefined, alice.cookie);
   assert.equal(r.status, 200);
   const qs = r.data.questions;
-  assert.equal(qs.length, 9);
+  assert.equal(qs.length, 13);
   assert.deepEqual(qs.map((q) => q.key), [
     'real_world_action', 'connected', 'clarity_agency', 'pressure',
     'suggestion_volume', 'supportive_now', 'offline_time', 'ai_humility',
     'pause_autonomy',
+    // Digital Sapiens layer: attention integrity questions.
+    'net_attention', 'intentional_use', 'real_life_pull', 'pathways_reflection',
   ]);
   const kinds = Object.fromEntries(qs.map((q) => [q.key, q.kind]));
   assert.deepEqual(kinds, {
@@ -121,6 +123,10 @@ test('GET /api/flourishing/questions returns the exact question set', async () =
     offline_time: 'yesno',
     ai_humility: 'yesno',
     pause_autonomy: 'yesno',
+    net_attention: 'choice',
+    intentional_use: 'yesno',
+    real_life_pull: 'yesno',
+    pathways_reflection: 'text',
   });
   for (const q of qs) {
     assert.ok(typeof q.text === 'string' && q.text.length > 0, `question ${q.key} needs text`);

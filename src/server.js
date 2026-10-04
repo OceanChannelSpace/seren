@@ -32,7 +32,7 @@ import { findBestMatch, buildIntroNote, findMatches, findAgentMatches, suggestFi
 import {
   parseIntent, selectFollowUps, answerQuestion, buildProposals,
   remainingQuestions, getQuestionDef, buildBriefDraft, buildWarmIntroMessage,
-  realLifePrompt, REAL_LIFE_PROMPT_TEXT,
+  realLifePrompt, REAL_LIFE_PROMPT_TEXT, realLifeHandoff,
 } from './guide.js';
 import {
   greetingMessages, questionMessage, briefMessage, publicBrief,
@@ -105,7 +105,12 @@ import {
   createIntroductionFeedback,
   setIntroductionRealLifeIntention,
   completeIntroductionRealLifeIntention,
+  markIntroductionMovedToRealLife,
   getFlourishingAggregates,
+  // Digital Sapiens layer (v17): attention-open origins for host analytics
+  recordAttentionOpen,
+  getAttentionOpenAggregates,
+  ATTENTION_ORIGINS,
   createCircle,
   getCircle,
   listCircles,
@@ -259,6 +264,8 @@ function toWireIntroduction(intro) {
     // v16 ("Flourishing by Design"): member-declared offline intent.
     realLifeIntention: intro.realLifeIntention || '',
     intentionCompleted: intro.intentionCompleted === true,
+    // Digital Sapiens layer: member-declared "moved to real life".
+    movedToRealLife: intro.movedToRealLife === true,
     createdAt: intro.createdAt,
     updatedAt: intro.updatedAt,
   };
@@ -1067,6 +1074,13 @@ const FLOURISHING_QUESTIONS = [
   { key: 'offline_time', text: 'Did SEREN help you spend more meaningful time offline?', kind: 'yesno' },
   { key: 'ai_humility', text: 'Did the SEREN guide feel appropriately humble and non-authoritative?', kind: 'yesno' },
   { key: 'pause_autonomy', text: 'Do you feel you could pause or leave SEREN without losing autonomy?', kind: 'yesno' },
+  // Digital Sapiens layer (Jack Probert, Experiment 2): attention
+  // integrity — does SEREN itself leave people more present, intentional,
+  // and pulled toward real life, or more scattered and screen-bound?
+  { key: 'net_attention', text: 'After using SEREN today, do you feel more present and focused, or more scattered?', kind: 'choice', choices: ['more_present', 'about_same', 'more_scattered'] },
+  { key: 'intentional_use', text: 'Did you open SEREN with a clear purpose today, and leave when you were done?', kind: 'yesno' },
+  { key: 'real_life_pull', text: 'Did SEREN nudge you toward a real-world connection or action today?', kind: 'yesno' },
+  { key: 'pathways_reflection', text: 'Which did you touch today — serving someone, time with community, making something, a small ritual, or a moment of awe? (optional)', kind: 'text', optional: true },
 ];
 const FLOURISHING_QUESTION_BY_KEY = Object.fromEntries(
   FLOURISHING_QUESTIONS.map((q) => [q.key, q]));
@@ -1243,6 +1257,38 @@ app.post('/api/introductions/:id/real-life-intention/complete', (req, res) => {
   res.json({ introduction: toWireIntroduction(updated) });
 });
 
+// Digital Sapiens (P6): move an accepted introduction to real life. The
+// member declares the connection now lives beyond the app; SEREN steps
+// back and stops nudging about it. Consent-first, optional, participant-
+// only, and only from a mutually accepted connection.
+app.post('/api/introductions/:id/move-to-real-life', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const intro = getIntroduction(parseId(req.params.id));
+  if (!requireParticipant(req, res, intro, profile.id)) return;
+  if (!['accepted', 'accepted_with_boundary'].includes(intro.status)) {
+    return err(res, 409, ERROR_CODES.INVALID_TRANSITION,
+      'Only a mutually accepted connection can move to real life.');
+  }
+  const updated = markIntroductionMovedToRealLife(intro.id);
+  res.json({ introduction: toWireIntroduction(updated), handoff: realLifeHandoff() });
+});
+
+// Digital Sapiens attention analytics: record one app open with its coarse
+// origin. SEREN sends no engagement notifications by design, so opens the
+// client reports as 'intentional' are the honest default; the endpoint
+// exists so any future entry point is measured separately, never blended.
+app.post('/api/attention/open', (req, res) => {
+  const profile = requireSelfProfile(req, res, req.body?.profileId);
+  if (!profile) return;
+  const origin = typeof req.body?.origin === 'string' ? req.body.origin.trim() : '';
+  if (!ATTENTION_ORIGINS.includes(origin)) {
+    return validationErr(res, [{ field: 'origin', message: `origin must be one of: ${ATTENTION_ORIGINS.join(', ')}` }]);
+  }
+  const id = recordAttentionOpen(profile.id, origin);
+  res.json({ recorded: true, id });
+});
+
 // Host-only outcome analytics. Deliberately no engagement metrics (no DAU,
 // session time, message volume, streaks): every number here is a
 // member-reported outcome. Windows: check-in metrics trail 30 days;
@@ -1254,6 +1300,15 @@ app.get('/api/host/analytics', (req, res) => {
   const answered = Object.fromEntries(agg.answeredByKey.map((r) => [r.questionKey, r.n]));
   const yes = Object.fromEntries(agg.yesByKey.map((r) => [r.questionKey, r.yesN]));
   const pctYes = (key) => pct(yes[key] || 0, answered[key] || 0);
+  // Digital Sapiens attention impact: net_attention choice distribution +
+  // intentional-use / real-life-pull yes-rates + app-open origins. All
+  // member-reported or client-reported; still no engagement-maximizing
+  // metrics (no DAU targets, no session-time goals, no streaks).
+  const netAtt = { more_present: 0, about_same: 0, more_scattered: 0 };
+  for (const r of agg.choiceDist || []) {
+    if (r.answer in netAtt) netAtt[r.answer] = r.n;
+  }
+  const netAttN = netAtt.more_present + netAtt.about_same + netAtt.more_scattered;
   res.json({
     realWorldAction30d: { pct: pctYes('real_world_action'), n: answered['real_world_action'] || 0 },
     introductionQuality: {
@@ -1271,6 +1326,16 @@ app.get('/api/host/analytics', (req, res) => {
     },
     autonomy: { pctPauseConfident: pctYes('pause_autonomy') },
     aiHumility: { pct: pctYes('ai_humility') },
+    attentionImpact: {
+      opens30d: getAttentionOpenAggregates(),
+      netAttention: {
+        pctMorePresent: pct(netAtt.more_present, netAttN),
+        n: netAttN,
+        distribution: netAtt,
+      },
+      intentionalUse: { pct: pctYes('intentional_use') },
+      realLifePull: { pct: pctYes('real_life_pull') },
+    },
     computedAt: new Date().toISOString(),
   });
 });

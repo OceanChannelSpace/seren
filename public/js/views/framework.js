@@ -79,6 +79,32 @@ export async function renderFramework(root) {
   test.appendChild(el(`<p class="field-hint" style="margin-top:1rem">A feature that fails any one of these does not ship, no matter how clever it is.</p>`));
   body.appendChild(test);
 
+  // --- Digital Sapiens: attention-integrity commitments ----------------
+  // Grounded in Jack Probert's Digital Sapiens Experiment 2 (20 Harvard
+  // students, 3 days without instant messaging, Sep 2026): technology
+  // should empower, connect, and elevate — never diminish attention or
+  // the quality of connection. These are SEREN's standing commitments.
+  const ds = el(`<div class="card"></div>`);
+  ds.appendChild(el(`<p class="kicker">Attention integrity — the Digital Sapiens commitments</p>`));
+  ds.appendChild(el(`<h2 style="font-size:1.35rem">A connection app must not cost you your attention</h2>`));
+  ds.appendChild(el(`<p class="lede" style="font-size:1rem">In Jack Probert's Digital Sapiens Experiment 2, twenty Harvard students gave up instant messaging for three days. Stress fell, focus rose, and outreach became more intentional — but fabricated social norms made some quit within a day, and people missed small moments of connection. We take eight lessons from that experiment as binding commitments:</p>`));
+  const dsList = el(`<ul class="reason-list"></ul>`);
+  for (const item of [
+    'Logistics and connection are different jobs. Coordinating the when and where is plumbing; the human connection is the point. SEREN never treats them as the same kind of message.',
+    'Outreach stays intentional. A little friction — a confirm step, a moment to consider — protects the quality of every introduction. Easy to send must never mean thoughtless.',
+    'Designed for closest circles, not infinite networks. Fewer, deeper connections are the goal; SEREN will not push you to keep up with hundreds of lives.',
+    'Calm interfaces, closed loops. No pings engineered to pull you back, no badges, no half-processed threads left buzzing. Conversations here can end — and that is fine.',
+    'Reply when you want. There is no "always on" here. Slow replies need no apology, and silence is a complete answer.',
+    'The app points outward. When a connection is ready for real life, SEREN steps back and celebrates leaving. Less time here and more time in your life is a win.',
+    'Small joys stay easy. Sharing a song, an article, a funny moment should be effortless — without demanding a fast reply in return.',
+    'Belonging without enforced replies. Group spaces keep you tethered to your people, but nobody owes the group their immediate attention.',
+  ]) {
+    dsList.appendChild(el(`<li>${esc(item)}</li>`));
+  }
+  ds.appendChild(dsList);
+  ds.appendChild(el(`<p class="field-hint" style="margin-top:1rem">Informed by Jack Probert, <em>Digital Sapiens</em> — Experiment 2: twenty Harvard Business School students, three days without instant messaging, September 2026. Honest caveat: a tiny sample, three days, self-reported scores — suggestive, not clinical evidence. SEREN makes no medical or mental-health claims.</p>`));
+  body.appendChild(ds);
+
   const coda = el(`<div class="card"></div>`);
   coda.appendChild(el(`<h3 style="margin-top:0">The honest version</h3>`));
   coda.appendChild(el(`<p class="about-text">A connection app cannot make anyone flourish. It can only remove obstacles, offer invitations, and get out of the way. That is the whole ambition — held lightly, on purpose.</p>`));

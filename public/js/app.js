@@ -2,7 +2,7 @@
 
 import { get, set } from './state.js';
 import { addRoute, startRouter } from './router.js';
-import { betaStatus, fetchMeta } from './api.js';
+import { betaStatus, fetchMeta, recordAttentionOpen } from './api.js';
 import { renderWelcome } from './views/welcome.js';
 import { renderHome } from './views/home.js';
 import { renderOnboardingChat } from './views/onboarding-chat.js';
@@ -32,6 +32,17 @@ async function boot() {
     betaEntered = !s.beta || s.entered;
   } catch { betaEntered = true; /* fail open locally */ }
   set({ betaEntered });
+
+  // Digital Sapiens attention analytics: record one intentional app open
+  // per boot. Fire-and-forget — never blocks boot or surfaces errors.
+  // SEREN sends no engagement notifications, so 'intentional' is the
+  // honest default origin.
+  try {
+    const bootProfileId = get('profileId');
+    if (betaEntered && bootProfileId) {
+      recordAttentionOpen(bootProfileId, 'intentional').catch(() => {});
+    }
+  } catch { /* never block boot */ }
 
   // Product taxonomy + brand (brand name is provisional — see src/config.js).
   try {

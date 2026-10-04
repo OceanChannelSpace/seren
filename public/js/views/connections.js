@@ -68,6 +68,45 @@ function realLifeIntentionBlock(intro, meId, onDone) {
   return wrap;
 }
 
+/** Digital Sapiens real-life handoff for one accepted introduction.
+ *  Marks the connection as moved to real life: SEREN steps back and stops
+ *  nudging about it. Consent-first, optional, never an outcome claim. */
+function realLifeHandoffBlock(intro, meId, onDone) {
+  const wrap = el(`<div class="rl-card"></div>`);
+  if (intro.movedToRealLife === true) {
+    wrap.appendChild(el(`<h4>Beyond the screen</h4>`));
+    wrap.appendChild(el(`<p style="margin-bottom:0">✦ This connection lives in real life now. SEREN has stepped back — no more nudges about this one.</p>`));
+    return wrap;
+  }
+  wrap.appendChild(el(`<h4>Ready to take this beyond the screen?</h4>`));
+  wrap.appendChild(el(`<p>If you've swapped a way to reach each other — or made real-life plans — you can mark this connection as moved. SEREN will step back and stop nudging about it. Entirely optional.</p>`));
+  const row = el(`<div class="btn-row" style="margin-top:0.6rem"></div>`);
+  const move = el(`<button type="button" class="btn btn-secondary btn-small">We've moved to real life</button>`);
+  move.addEventListener('click', async () => {
+    const ok = await confirmDialog({
+      title: 'Move this to real life?',
+      body: 'SEREN will step back from this connection — no more prompts or nudges about it here. You can both still message each other.',
+      confirmLabel: 'Move to real life',
+    });
+    if (!ok) return;
+    move.disabled = true;
+    try {
+      const { handoff } = await api.moveToRealLife(intro.id, meId);
+      wrap.innerHTML = '';
+      wrap.appendChild(el(`<h4>Beyond the screen</h4>`));
+      wrap.appendChild(el(`<p style="margin-bottom:0">${esc((handoff && handoff.text) || 'The good stuff happens out there.')}</p>`));
+      toast('Stepping back with warmth.');
+      onDone();
+    } catch (e) {
+      toast(friendlyError(e));
+      move.disabled = false;
+    }
+  });
+  row.appendChild(move);
+  wrap.appendChild(row);
+  return wrap;
+}
+
 /** Post-connection feedback nudge: felt safe? quality? notes? */
 function feedbackNudgeBlock(intro, meId) {
   const wrap = el(`<div class="feedback-nudge"></div>`);
@@ -162,6 +201,10 @@ function connectionCard(intro, meId, onDone) {
   // intent for the next 24 hours, with set/complete affordances. Never an
   // outcome claim, never a streak — just a quiet nudge toward real life.
   c.appendChild(realLifeIntentionBlock(intro, meId, onDone));
+
+  // --- Digital Sapiens real-life handoff: mark the connection as moved
+  // beyond the app; SEREN steps back and stops nudging about it.
+  c.appendChild(realLifeHandoffBlock(intro, meId, onDone));
 
   // --- post-connection feedback nudge: felt safe? quality? Optional, one
   // per member; the server enforces the one-feedback rule (409).

@@ -271,11 +271,22 @@ export const setRealLifeIntention = (id, profileId, intention) =>
 // POST /api/introductions/:id/real-life-intention/complete {profileId} → 200
 export const completeRealLifeIntention = (id, profileId) =>
   request('POST', `/api/introductions/${id}/real-life-intention/complete`, { profileId });
+// POST /api/introductions/:id/move-to-real-life {profileId} → 200 {introduction,handoff}
+// Digital Sapiens: member declares the connection now lives beyond the app.
+export const moveToRealLife = (id, profileId) =>
+  request('POST', `/api/introductions/${id}/move-to-real-life`, { profileId });
 
 // --- host flourishing analytics ---
 // GET /api/host/analytics (host-only) →
 export const getHostAnalytics = () =>
   request('GET', '/api/host/analytics');
+
+// --- Digital Sapiens attention analytics ---
+// POST /api/attention/open {profileId,origin} → 200. Fire-and-forget from
+// app boot: SEREN sends no engagement notifications, so 'intentional' is
+// the honest default origin.
+export const recordAttentionOpen = (profileId, origin) =>
+  request('POST', '/api/attention/open', { profileId, origin });
 
 /** Friendly one-line summary for an ApiError, for banners/toasts. */
 export function friendlyError(e) {
