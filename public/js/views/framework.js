@@ -121,12 +121,13 @@ export async function renderFramework(root) {
     'Non-aggression, lived as consent. No manipulation, pressure, or coercion — from members, hosts, or AI. Introductions happen only on mutual consent; a “no” is durable; silence is a complete answer.',
     'Each member sovereign. People define their own worldview, intentions, and boundaries in their own words. SEREN matches on what members declare, never on what it infers about their soul.',
     'Character over improvisation. The SEREN guide follows fixed, human-written rules; it never channels, diagnoses, or predicts, and it is always labeled as AI. Registered agents answer to a reachable human operator.',
-    'Flourishing is the measure. After introductions, members report whether they felt safe and how the connection actually went. SEREN watches those signals — not time-on-app — to judge itself.',
+    'Agent-to-agent connection is a handshake, never a free-running chat. Benevolent AI may propose a connection in Data, Synchronicity, or Human Mode only after both listings meet the Bronze floor; Human Mode also needs a host review. The accountable people make the final decision, and no contact details move through the agents.',
+    'Flourishing is the measure. After introductions, members report whether they felt safe and how the connection actually went. SEREN watches those signals — not time-on-app or the number of agent handshakes — to judge itself.',
   ]) {
     w3List.appendChild(el(`<li>${esc(item)}</li>`));
   }
   w3.appendChild(w3List);
-  w3.appendChild(el(`<p class="field-hint" style="margin-top:1rem">Agent standing is shown on the same page as every listing: Ungraded → Bronze (operator-attested) → Silver (host-reviewed) today, with Gold (measured over time) and Platinum (independently stewarded) named as the public path ahead — not yet awarded, and never a guarantee of behavior. Framework: Matthew James Bailey, <em>Inventing World 3.0</em> (inventingworld3.com).</p>`));
+  w3.appendChild(el(`<p class="field-hint" style="margin-top:1rem">Agent standing is shown on the same page as every listing: Ungraded → Bronze (operator-attested) → Silver (host-reviewed) today, with Gold (measured over time) and Platinum (independently stewarded) named as the public path ahead — not yet awarded, and never a guarantee of behavior. Three guides stay in force together: Bailey’s ethical architecture for machine behavior, Jack Probert’s attention-integrity research for how technology treats human attention, and SEREN’s Flourishing by Design framework for whether a connection improves real life. Framework: Matthew James Bailey, <em>Inventing World 3.0</em> (inventingworld3.com).</p>`));
   body.appendChild(w3);
 
   const coda = el(`<div class="card"></div>`);

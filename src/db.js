@@ -15,7 +15,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, createHash } from 'node:crypto';
-import { INTRO_STATUS, AGENT_VETTING_KEYS } from './constants.js';
+import { INTRO_STATUS, AGENT_VETTING_KEYS, AGENT_CERT_RANK } from './constants.js';
 // v16 (Flourishing): reflective framing appended to synchronicity
 // introduction notes — copy-only, no behavior change.
 import { REFLECTIVE_FRAMING } from './sync-deck.js';
@@ -722,6 +722,49 @@ if (userVersion < 18) {
   db.exec('PRAGMA user_version = 18');
 }
 
+// v19: Layer 3 (Benevolent AI -> Benevolent AI), governed by
+// docs/SEREN_AI_CONSTITUTION.md §7. An agent connection is a bounded
+// protocol handshake between two registered agents — never an open-ended
+// agent chat. The pair key makes each pair durable: a decline or a safety
+// block cannot be bypassed by deleting and recreating the proposal. A
+// human introduction is created only after both accountable operators
+// accept, and it still passes through SEREN's ordinary mutual-consent
+// introduction flow before any contact details are visible.
+function migrateToV19() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_connections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pair_key TEXT NOT NULL UNIQUE,
+      source_agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      target_agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      proposed_by_profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL DEFAULT 'data'
+        CHECK(mode IN ('data', 'synchronicity', 'human')),
+      rationale TEXT NOT NULL DEFAULT '',
+      data_basis TEXT NOT NULL DEFAULT '',
+      synchronicity_signal TEXT NOT NULL DEFAULT '',
+      synchronicity_source TEXT NOT NULL DEFAULT ''
+        CHECK(synchronicity_source IN ('', 'member_supplied', 'seren_generated')),
+      status TEXT NOT NULL DEFAULT 'proposed'
+        CHECK(status IN ('proposed', 'accepted', 'declined', 'withdrawn', 'blocked')),
+      host_profile_id INTEGER REFERENCES profiles(id) ON DELETE SET NULL,
+      host_approved INTEGER NOT NULL DEFAULT 0,
+      host_reviewed_at TEXT NOT NULL DEFAULT '',
+      responder_note TEXT NOT NULL DEFAULT '',
+      introduction_id INTEGER REFERENCES introductions(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_connections_source ON agent_connections(source_agent_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_connections_target ON agent_connections(target_agent_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_agent_connections_status_mode ON agent_connections(status, mode)');
+}
+if (userVersion < 19) {
+  migrateToV19();
+  db.exec('PRAGMA user_version = 19');
+}
+
 // ---------- defaults ----------
 
 export function defaultPrefs() {
@@ -1406,6 +1449,273 @@ export function hideAgent(id, operatorProfileId) {
   db.prepare('UPDATE agents SET is_hidden = 1, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id);
   return true;
+}
+
+// ---------- Layer 3: Benevolent AI -> Benevolent AI ----------
+// A connection here is a bounded handshake, not an open-ended agent chat.
+// Both agents must be Bronze or above (all five benevolence criteria
+// affirmed); Human Mode also requires review by a named SEREN host. The
+// accountable operators then make the final decision. Acceptance creates
+// an ordinary proposed introduction between the operators, so no contact
+// details or messaging unlock until SEREN's normal human consent flow
+// has run. A decline is durable for that agent pair.
+
+function agentConnectionPairKey(a, b) {
+  const lo = Math.min(Number(a), Number(b));
+  const hi = Math.max(Number(a), Number(b));
+  return `${lo}:${hi}`;
+}
+
+function toAgentConnection(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    pairKey: row.pair_key,
+    sourceAgentId: row.source_agent_id,
+    targetAgentId: row.target_agent_id,
+    sourceAgent: getAgent(row.source_agent_id),
+    targetAgent: getAgent(row.target_agent_id),
+    proposedByProfileId: row.proposed_by_profile_id,
+    mode: row.mode,
+    rationale: row.rationale || '',
+    dataBasis: row.data_basis || '',
+    synchronicitySignal: row.synchronicity_signal || '',
+    synchronicitySource: row.synchronicity_source || '',
+    status: row.status,
+    hostProfileId: row.host_profile_id,
+    hostApproved: row.host_approved === 1,
+    hostReviewedAt: row.host_reviewed_at || '',
+    responderNote: row.responder_note || '',
+    introductionId: row.introduction_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function getAgentConnection(id) {
+  return toAgentConnection(db.prepare('SELECT * FROM agent_connections WHERE id = ?').get(id));
+}
+
+export function getAgentConnectionByPair(sourceAgentId, targetAgentId) {
+  return toAgentConnection(db.prepare(
+    'SELECT * FROM agent_connections WHERE pair_key = ?',
+  ).get(agentConnectionPairKey(sourceAgentId, targetAgentId)));
+}
+
+export function evaluateAgentConnectionHandshake(source, target, mode, { hostApproved = false } = {}) {
+  const issues = [];
+  if (!source || !target) {
+    issues.push('Both agents must exist.');
+    return { eligible: false, issues, requiresHostReview: mode === 'human', hostApproved };
+  }
+  if (Number(source.id) === Number(target.id)) issues.push('An agent cannot connect to itself.');
+  if (source.isHidden || target.isHidden) issues.push('Hidden agents cannot connect.');
+  if (!source.operatorProfileId || !target.operatorProfileId) {
+    issues.push('Both agents need an accountable human operator.');
+  }
+  if (source.operatorProfileId && target.operatorProfileId
+    && Number(source.operatorProfileId) === Number(target.operatorProfileId)) {
+    issues.push('Agents operated by the same person cannot connect to each other.');
+  }
+  if ((AGENT_CERT_RANK[source.certTier] ?? 0) < AGENT_CERT_RANK.bronze) {
+    issues.push('The proposing agent must complete the benevolence checklist (Bronze) before connecting.');
+  }
+  if ((AGENT_CERT_RANK[target.certTier] ?? 0) < AGENT_CERT_RANK.bronze) {
+    issues.push('The receiving agent must complete the benevolence checklist (Bronze) before connecting.');
+  }
+  if (!['data', 'synchronicity', 'human'].includes(mode)) {
+    issues.push('Connection mode must be data, synchronicity, or human.');
+  }
+  if (mode === 'human' && source.certTier !== 'silver' && target.certTier !== 'silver') {
+    issues.push('Human Mode requires at least one Silver (host-reviewed) agent.');
+  }
+
+  // The endpoint of this handshake is a human introduction, so the two
+  // operators must still be eligible for one: opted in, not paused, and
+  // not separated by a durable decline.
+  if (source.operatorProfileId && target.operatorProfileId
+    && Number(source.operatorProfileId) !== Number(target.operatorProfileId)) {
+    const sourceProfile = getProfile(source.operatorProfileId);
+    const targetProfile = getProfile(target.operatorProfileId);
+    if (!sourceProfile || !targetProfile) {
+      issues.push('Both accountable operators must still be SEREN members.');
+    } else {
+      if (!sourceProfile.consents?.introductions || !targetProfile.consents?.introductions) {
+        issues.push('Both operators must be opted into introductions.');
+      }
+      if (sourceProfile.consentSettings?.paused || targetProfile.consentSettings?.paused) {
+        issues.push('An operator has paused connection activity.');
+      }
+      if (hasDeclineBlock(targetProfile.id, sourceProfile.id)) {
+        issues.push('The receiving operator has declined repeat requests from the proposing operator.');
+      }
+      const existing = findExistingPair(sourceProfile.id, targetProfile.id);
+      if (existing && ['declined', 'declined_hidden'].includes(existing.status)) {
+        issues.push('These operators have already declined an introduction.');
+      }
+    }
+  }
+
+  return {
+    eligible: issues.length === 0,
+    issues,
+    requiresHostReview: mode === 'human',
+    hostApproved,
+  };
+}
+
+export function createAgentConnection({
+  sourceAgentId, targetAgentId, proposedByProfileId, mode,
+  rationale = '', dataBasis = '', synchronicitySignal = '', synchronicitySource = '',
+}) {
+  const source = getAgent(sourceAgentId);
+  const target = getAgent(targetAgentId);
+  const handshake = evaluateAgentConnectionHandshake(source, target, mode);
+  if (!handshake.eligible) return { error: 'ineligible', issues: handshake.issues, handshake };
+  if (Number(source.operatorProfileId) !== Number(proposedByProfileId)) return 'forbidden';
+
+  const existing = getAgentConnectionByPair(sourceAgentId, targetAgentId);
+  if (existing) {
+    // Proposed/accepted/declined/blocked are all durable states. Only a
+    // withdrawn proposal may be reopened, and only as the same pair row.
+    if (existing.status !== 'withdrawn') return existing;
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE agent_connections
+      SET source_agent_id = ?, target_agent_id = ?, proposed_by_profile_id = ?,
+          mode = ?, rationale = ?, data_basis = ?, synchronicity_signal = ?,
+          synchronicity_source = ?, status = 'proposed', host_profile_id = NULL,
+          host_approved = 0, host_reviewed_at = '', responder_note = '',
+          introduction_id = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(
+      sourceAgentId, targetAgentId, proposedByProfileId, mode,
+      String(rationale || '').trim(), String(dataBasis || '').trim(),
+      String(synchronicitySignal || '').trim(), String(synchronicitySource || '').trim(),
+      now, existing.id,
+    );
+    return getAgentConnection(existing.id);
+  }
+
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO agent_connections
+      (pair_key, source_agent_id, target_agent_id, proposed_by_profile_id,
+       mode, rationale, data_basis, synchronicity_signal, synchronicity_source,
+       status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?, ?)
+  `).run(
+    agentConnectionPairKey(sourceAgentId, targetAgentId),
+    sourceAgentId, targetAgentId, proposedByProfileId, mode,
+    String(rationale || '').trim(), String(dataBasis || '').trim(),
+    String(synchronicitySignal || '').trim(), String(synchronicitySource || '').trim(),
+    now, now,
+  );
+  return getAgentConnection(Number(result.lastInsertRowid));
+}
+
+export function listAgentConnectionsForOperator(profileId) {
+  const rows = db.prepare(`
+    SELECT ac.*
+    FROM agent_connections ac
+    JOIN agents sa ON sa.id = ac.source_agent_id
+    JOIN agents ta ON ta.id = ac.target_agent_id
+    WHERE sa.operator_profile_id = ? OR ta.operator_profile_id = ?
+    ORDER BY ac.id DESC
+  `).all(profileId, profileId);
+  return rows.map(toAgentConnection);
+}
+
+export function listAgentConnectionsForHost() {
+  const rows = db.prepare(`
+    SELECT * FROM agent_connections
+    WHERE mode = 'human'
+    ORDER BY (status = 'proposed' AND host_approved = 0) DESC, id DESC
+  `).all();
+  return rows.map(toAgentConnection);
+}
+
+export function hostReviewAgentConnection(id, hostProfileId) {
+  const conn = getAgentConnection(id);
+  if (!conn) return null;
+  if (conn.mode !== 'human') return 'not_human_mode';
+  if (conn.status !== 'proposed') return 'invalid';
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE agent_connections
+    SET host_profile_id = ?, host_approved = 1, host_reviewed_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(hostProfileId, now, now, id);
+  return getAgentConnection(id);
+}
+
+export function respondToAgentConnection(id, profileId, action, responderNote = '') {
+  const conn = getAgentConnection(id);
+  if (!conn) return null;
+  const source = conn.sourceAgent;
+  const target = conn.targetAgent;
+  if (!source || !target) return 'invalid';
+
+  if (action === 'withdraw') {
+    if (Number(source.operatorProfileId) !== Number(profileId)) return 'forbidden';
+    if (conn.status !== 'proposed') return 'invalid';
+    db.prepare(`
+      UPDATE agent_connections
+      SET status = 'withdrawn', responder_note = ?, updated_at = ?
+      WHERE id = ?
+    `).run(String(responderNote || '').trim(), new Date().toISOString(), id);
+    return getAgentConnection(id);
+  }
+
+  if (!['accept', 'decline'].includes(action)) return 'invalid';
+  if (Number(target.operatorProfileId) !== Number(profileId)) return 'forbidden';
+  if (conn.status !== 'proposed') return 'invalid';
+
+  const now = new Date().toISOString();
+  if (action === 'decline') {
+    db.prepare(`
+      UPDATE agent_connections
+      SET status = 'declined', responder_note = ?, updated_at = ?
+      WHERE id = ?
+    `).run(String(responderNote || '').trim(), now, id);
+    return getAgentConnection(id);
+  }
+
+  const handshake = evaluateAgentConnectionHandshake(source, target, conn.mode, {
+    hostApproved: conn.hostApproved,
+  });
+  if (!handshake.eligible) return { error: 'ineligible', issues: handshake.issues, handshake };
+  if (handshake.requiresHostReview && !conn.hostApproved) return 'host_review_required';
+
+  // Both operators have now consented to the agent handshake. Create (or
+  // reuse) the ordinary human introduction in its proposed state: contact
+  // details and messaging still unlock only through that flow.
+  const sourceProfile = getProfile(source.operatorProfileId);
+  const targetProfile = getProfile(target.operatorProfileId);
+  let intro = findExistingPair(sourceProfile.id, targetProfile.id);
+  if (!intro) {
+    const basis = conn.mode === 'data'
+      ? (conn.dataBasis || 'Declared capabilities, needs, and intentions supplied by the operators.')
+      : conn.mode === 'synchronicity'
+        ? `Synchronicity signal (${conn.synchronicitySource === 'seren_generated' ? 'SEREN-generated and labeled as such' : 'supplied by a member'}): ${conn.synchronicitySignal}`
+        : 'Facilitated in Human Mode after SEREN host review.';
+    intro = createIntroduction({
+      requesterId: sourceProfile.id,
+      proposedId: targetProfile.id,
+      intention: `Agent-mediated connection (${conn.mode} mode)`,
+      note: `${source.name} and ${target.name} completed SEREN's agent handshake. Basis: ${basis} Operator rationale: ${conn.rationale || 'No rationale supplied.'} No contact details are shared by the agent connection itself.`,
+      score: 0,
+      connectionType: 'agent-mediated',
+      requestMessage: conn.rationale || '',
+    });
+  }
+
+  db.prepare(`
+    UPDATE agent_connections
+    SET status = 'accepted', responder_note = ?, introduction_id = ?, updated_at = ?
+    WHERE id = ?
+  `).run(String(responderNote || '').trim(), intro.id, now, id);
+  return getAgentConnection(id);
 }
 
 const getIntroductionStmt = db.prepare('SELECT * FROM introductions WHERE id = ?');

@@ -97,6 +97,18 @@ export const hideAgent = (id, _operatorProfileId) =>
 export const reviewAgent = (id) =>
   request('POST', `/api/agents/${id}/review`, {});
 
+// --- Layer 3: Benevolent AI -> Benevolent AI connections ---
+export const createAgentConnection = (payload) =>
+  request('POST', '/api/agent-connections', payload);
+export const listMyAgentConnections = () =>
+  request('GET', '/api/agent-connections/mine');
+export const listHostAgentConnections = () =>
+  request('GET', '/api/agent-connections/host');
+export const hostReviewAgentConnection = (id) =>
+  request('POST', `/api/agent-connections/${id}/host-review`, {});
+export const respondAgentConnection = (id, payload) =>
+  request('POST', `/api/agent-connections/${id}/respond`, payload);
+
 // --- legacy single-shot introduction request ---
 export const requestIntroduction = (_requesterId, intention) =>
   request('POST', '/api/introductions/request', { intention });

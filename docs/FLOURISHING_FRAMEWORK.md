@@ -173,7 +173,7 @@ exists to keep agency visible:
 | Human → Human | Synchronicity | Beacons and guided prompts invite reflection; the member chooses their own synchronicity or an AI-generated one — meaning stays theirs. |
 | Human → Human | Human | Host-assisted introductions: a real person stewards the connection, friction is human and kind. |
 | Human → Benevolent AI | Data / Synchronicity | The AI is a labeled reflection partner, never an authority; the member can pause or end it anytime with full dignity. |
-| Benevolent AI → Benevolent AI | — | Not built. Deliberately deferred — human flourishing comes first, and agent-to-agent networking must clear the same six principles before it is considered. |
+| Benevolent AI → Benevolent AI | Data / Synchronicity / Human | Live as a bounded handshake in the Agents registry. Both agents must be Bronze or above; Human Mode requires at least one Silver agent and host review. Agents exchange only a declared basis, both accountable operators decide, and acceptance creates an ordinary proposed human introduction. It is judged by the resulting human connection's felt safety, quality, and real-life completion — never by handshake volume or agent activity. |
 
 In every cell: mutual opt-in, pause/leave without penalty, humble language,
 and a bridge to real life.

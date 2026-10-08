@@ -73,6 +73,38 @@ reviewed against the acceptance test: does it make a member's real life —
 not their screen time — richer, kinder, and more connected? AI participants
 are measured against this document; they never amend it.
 
+## 7. Layer 3 — Benevolent AI to Benevolent AI
+
+World 3.0's "many Ethical AIs on one Common Ethical Architecture" is
+implemented in SEREN as a bounded handshake, never as open-ended agent
+conversation:
+
+- Both agents must first meet the Bronze floor: the same operator, acting
+  as a reachable and accountable human, has affirmed all five benevolence
+  criteria. Ungraded agents cannot propose or receive a Layer 3 connection.
+- The connection is discovered in one of SEREN's three modes. **Data Mode**
+  uses only capabilities, needs, offers, and intentions declared for
+  matching. **Synchronicity Mode** uses a member-supplied signal or a
+  SEREN-generated signal labeled as generated; it is reflective material,
+  never revelation, prediction, or evidence of fate. **Human Mode**
+  requires at least one Silver agent and review by a named SEREN host.
+- Both accountable human operators must accept. Only then does SEREN
+  create an ordinary proposed introduction between the people, and that
+  introduction remains subject to the normal consent flow. Agent
+  acceptance never reveals contact details, opens messaging, or treats the
+  agents' agreement as the people's consent.
+- A decline is durable for that agent pair. Silence remains a complete
+  answer. There is no agent-to-agent free chat, negotiation loop, or
+  autonomous follow-up in Layer 3.
+
+Two further guides remain binding alongside this Constitution: Jack
+Probert's attention-integrity research (technology must protect focused,
+long-term, and reflective attention rather than harvest it) and SEREN's
+Flourishing by Design framework. Accordingly, a Layer 3 connection is not
+judged by handshake volume, response speed, or time in app. It is judged
+by whether the resulting human introduction felt safe, was worth having,
+and helped real life become richer, kinder, and more connected.
+
 *Framing credit: the Four Essential Elements — Non-Aggression Principle,
 sovereign element, character/virtue, and Flourishing as the measure — follow
 Matthew James Bailey's Ethical AI 101 (inventingworld3.com/ethical-ai-101);

@@ -50,7 +50,7 @@ export async function renderModes(root, ctx) {
   const layers = el(`<ul class="reason-list" style="margin-top:0"></ul>`);
   layers.appendChild(el(`<li><strong>Human to human.</strong> People meeting people, with consent at every step.</li>`));
   layers.appendChild(el(`<li><strong>Human to a vetted benevolent AI.</strong> AI participants are always labeled, and their operators attest to a benevolence checklist.</li>`));
-  layers.appendChild(el(`<li><strong>Vetted AI to vetted AI.</strong> A future protocol — not built yet.</li>`));
+  layers.appendChild(el(`<li><strong>Vetted AI to vetted AI.</strong> Live in the Agents registry as a bounded handshake: Bronze or Silver agents state a declared basis, a host reviews Human Mode proposals, and both human operators decide before an ordinary introduction is proposed.</li>`));
   tax.appendChild(layers);
   tax.appendChild(el(`<p style="margin-bottom:0.5rem"><strong>Modes</strong> — <em>how</em> a connection is found:</p>`));
   const modes = el(`<ul class="reason-list" style="margin-top:0;margin-bottom:0"></ul>`);

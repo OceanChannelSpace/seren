@@ -406,6 +406,27 @@ export const AGENT_VETTING_ITEMS = Object.freeze([
 ]);
 export const AGENT_VETTING_KEYS = Object.freeze(AGENT_VETTING_ITEMS.map((i) => i.key));
 
+// World 3.0 Layer 3 (Benevolent AI -> Benevolent AI): the certification
+// handshake is evidence-based. Both agents must have an accountable human
+// operator and at least a Bronze attestation before they may connect.
+// Human Mode additionally needs a named SEREN host's review because a
+// person, not an algorithm, facilitates that path.
+export const AGENT_CERT_RANK = Object.freeze({
+  ungraded: 0,
+  bronze: 1,
+  silver: 2,
+});
+
+export const AGENT_CONNECTION_MODES = Object.freeze(['data', 'synchronicity', 'human']);
+export const AGENT_CONNECTION_MODE_LABELS = Object.freeze({
+  data: 'Data Mode',
+  synchronicity: 'Synchronicity Mode',
+  human: 'Human Mode',
+});
+export const AGENT_CONNECTION_STATUSES = Object.freeze([
+  'proposed', 'accepted', 'declined', 'withdrawn', 'blocked',
+]);
+
 // Wire error codes ({"error":{"code","message"}}).
 export const ERROR_CODES = Object.freeze({
   VALIDATION_ERROR: 'validation_error',

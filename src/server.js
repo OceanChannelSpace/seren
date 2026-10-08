@@ -11,7 +11,7 @@ import {
   PRACTICES, PRACTICE_VALUES, INTENTIONS, CONNECTION_TYPES, CONNECTION_FORMATS, FORMAT_LABELS,
   COMMITMENT_LEVELS, COMMITMENT_LABELS, TONES, TONE_LABELS,
   CIRCLE_KINDS, CIRCLE_KIND_VALUES, CIRCLE_PRIVACY, REQUEST_TEMPLATES, EXPLORE_TOPICS,
-  AGENT_VETTING_ITEMS,
+  AGENT_VETTING_ITEMS, AGENT_CONNECTION_MODES,
 } from './constants.js';
 import {
   validateProfileInput, validateIntroRequest, validateConnectionRequest,
@@ -139,6 +139,15 @@ import {
   updateAgent,
   hideAgent,
   setAgentReviewed,
+  // Layer 3 (v19): Benevolent AI -> Benevolent AI connections
+  getAgentConnection,
+  getAgentConnectionByPair,
+  evaluateAgentConnectionHandshake,
+  createAgentConnection,
+  listAgentConnectionsForOperator,
+  listAgentConnectionsForHost,
+  hostReviewAgentConnection,
+  respondToAgentConnection,
 } from './db.js';
 
 export const app = express();
@@ -707,6 +716,177 @@ app.post('/api/agents/:id/review', (req, res) => {
   const agent = setAgentReviewed(id, true);
   if (!agent || agent.isHidden) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
   res.json(agent);
+});
+
+// --- Layer 3: Benevolent AI -> Benevolent AI ---------------------------
+// Governed by docs/SEREN_AI_CONSTITUTION.md §7 (World 3.0 handshake),
+// Jack Probert's attention-integrity commitments, and SEREN's Flourishing
+// by Design measure. Agents exchange a bounded, declared basis for a
+// possible connection; they do not chat freely with one another. Both
+// accountable operators must accept before an ordinary human introduction
+// is proposed, and that introduction still uses the normal consent flow.
+
+function agentConnectionConflict(res, result, fallback) {
+  if (result && result.error === 'ineligible') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      result.issues.join(' '), result.issues);
+  }
+  if (result === 'forbidden') {
+    return err(res, 403, ERROR_CODES.FORBIDDEN,
+      'Only the accountable operator may do that.');
+  }
+  if (result === 'host_review_required') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'Human Mode needs a SEREN host review before the receiving operator can accept.');
+  }
+  if (result === 'not_human_mode') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      'Host review applies only to Human Mode agent connections.');
+  }
+  if (result === 'invalid') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE, fallback);
+  }
+  return null;
+}
+
+app.post('/api/agent-connections', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const body = req.body || {};
+  const sourceAgentId = parseId(body.sourceAgentId);
+  const targetAgentId = parseId(body.targetAgentId);
+  const mode = typeof body.mode === 'string' ? body.mode : '';
+  const rationale = typeof body.rationale === 'string' ? body.rationale.trim() : '';
+  const dataBasis = typeof body.dataBasis === 'string' ? body.dataBasis.trim() : '';
+  const synchronicitySignal = typeof body.synchronicitySignal === 'string'
+    ? body.synchronicitySignal.trim() : '';
+  const synchronicitySource = typeof body.synchronicitySource === 'string'
+    ? body.synchronicitySource : '';
+
+  const errors = [];
+  if (sourceAgentId === null) errors.push({ field: 'sourceAgentId', message: 'sourceAgentId must be a positive integer' });
+  if (targetAgentId === null) errors.push({ field: 'targetAgentId', message: 'targetAgentId must be a positive integer' });
+  if (!AGENT_CONNECTION_MODES.includes(mode)) {
+    errors.push({ field: 'mode', message: 'mode must be data, synchronicity, or human' });
+  }
+  if (rationale.length < 10 || rationale.length > 500) {
+    errors.push({ field: 'rationale', message: 'rationale must be 10–500 characters' });
+  }
+  if (mode === 'data' && (dataBasis.length < 10 || dataBasis.length > 500)) {
+    errors.push({ field: 'dataBasis', message: 'Data Mode needs the declared data basis (10–500 characters)' });
+  }
+  if (mode === 'synchronicity') {
+    if (synchronicitySignal.length < 3 || synchronicitySignal.length > 300) {
+      errors.push({ field: 'synchronicitySignal', message: 'synchronicitySignal must be 3–300 characters' });
+    }
+    if (!['member_supplied', 'seren_generated'].includes(synchronicitySource)) {
+      errors.push({ field: 'synchronicitySource', message: 'synchronicitySource must be member_supplied or seren_generated' });
+    }
+  }
+  if (errors.length) return validationErr(res, errors);
+
+  const source = getAgent(sourceAgentId);
+  const target = getAgent(targetAgentId);
+  if (!source || source.isHidden || !target || target.isHidden) {
+    return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent not found.');
+  }
+  if (Number(source.operatorProfileId) !== Number(profile.id)) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN,
+      'Only the proposing agent’s accountable operator may propose a connection.');
+  }
+
+  const existing = getAgentConnectionByPair(sourceAgentId, targetAgentId);
+  if (existing && existing.status !== 'withdrawn') {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
+      existing.status === 'declined'
+        ? 'That agent pair has already declined a connection. The decline is durable.'
+        : 'That agent pair already has a connection record.', [existing.status]);
+  }
+
+  const result = createAgentConnection({
+    sourceAgentId,
+    targetAgentId,
+    proposedByProfileId: profile.id,
+    mode,
+    rationale,
+    dataBasis: mode === 'data' ? dataBasis : '',
+    synchronicitySignal: mode === 'synchronicity' ? synchronicitySignal : '',
+    synchronicitySource: mode === 'synchronicity' ? synchronicitySource : '',
+  });
+  if (typeof result === 'string' || (result && result.error)) {
+    return agentConnectionConflict(res, result, 'This connection cannot be proposed now.');
+  }
+  res.status(201).json(result);
+});
+
+app.get('/api/agent-connections/mine', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  res.json({ connections: listAgentConnectionsForOperator(profile.id) });
+});
+
+app.get('/api/agent-connections/host', (req, res) => {
+  if (!requireHost(req, res)) return;
+  res.json({ connections: listAgentConnectionsForHost() });
+});
+
+app.get('/api/agent-connections/:id', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const id = parseId(req.params.id);
+  const conn = id === null ? null : getAgentConnection(id);
+  if (!conn) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent connection not found.');
+  const involved = Number(conn.sourceAgent?.operatorProfileId) === Number(profile.id)
+    || Number(conn.targetAgent?.operatorProfileId) === Number(profile.id);
+  if (!involved && !isHostEmail(profile.email)) {
+    return err(res, 403, ERROR_CODES.FORBIDDEN, 'This agent connection does not involve your agents.');
+  }
+  res.json(conn);
+});
+
+app.post('/api/agent-connections/:id/host-review', (req, res) => {
+  const host = requireHost(req, res);
+  if (!host) return;
+  const id = parseId(req.params.id);
+  if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent connection not found.');
+  const handshakeConn = getAgentConnection(id);
+  if (!handshakeConn) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent connection not found.');
+  const handshake = evaluateAgentConnectionHandshake(
+    handshakeConn.sourceAgent, handshakeConn.targetAgent, handshakeConn.mode,
+    { hostApproved: handshakeConn.hostApproved },
+  );
+  if (!handshake.eligible) {
+    return err(res, 409, ERROR_CODES.CONFLICT_STATE, handshake.issues.join(' '), handshake.issues);
+  }
+  const result = hostReviewAgentConnection(id, host.id);
+  if (typeof result === 'string') {
+    return agentConnectionConflict(res, result, 'This connection cannot be host-reviewed now.');
+  }
+  res.json(result);
+});
+
+app.post('/api/agent-connections/:id/respond', (req, res) => {
+  const profile = requireProfile(req, res);
+  if (!profile) return;
+  const id = parseId(req.params.id);
+  if (id === null) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent connection not found.');
+  const action = typeof req.body?.action === 'string' ? req.body.action : '';
+  const responderNote = typeof req.body?.responderNote === 'string'
+    ? req.body.responderNote.trim() : '';
+  const errors = [];
+  if (!['accept', 'decline', 'withdraw'].includes(action)) {
+    errors.push({ field: 'action', message: 'action must be accept, decline, or withdraw' });
+  }
+  if (responderNote.length > 500) {
+    errors.push({ field: 'responderNote', message: 'responderNote must be at most 500 characters' });
+  }
+  if (errors.length) return validationErr(res, errors);
+  const result = respondToAgentConnection(id, profile.id, action, responderNote);
+  if (!result) return err(res, 404, ERROR_CODES.NOT_FOUND, 'Agent connection not found.');
+  if (typeof result === 'string' || result.error) {
+    return agentConnectionConflict(res, result, 'This connection cannot be changed now.');
+  }
+  res.json(result);
 });
 
 app.post('/api/discover/pass', (req, res) => {

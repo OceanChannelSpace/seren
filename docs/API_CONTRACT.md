@@ -4,7 +4,7 @@
 shapes or field names without updating this file and notifying the
 coordinator.
 
-**Product taxonomy.** Three connection layers (who connects: Human to Human, Human to vetted benevolent AI, vetted AI to vetted AI) and three connection modes (how connections are found: Data, Synchronicity, Human). Vetted-AI-to-vetted-AI networking is a future protocol — not designed or built in this MVP.
+**Product taxonomy.** Three connection layers (who connects: Human to Human, Human to vetted benevolent AI, vetted AI to vetted AI) and three connection modes (how connections are found: Data, Synchronicity, Human). Benevolent-AI-to-benevolent-AI networking is live as a bounded handshake (see `agent_connections`, below): both agents must be Bronze or above, Human Mode requires at least one Silver agent plus SEREN host review, and both accountable operators must accept before an ordinary human introduction is proposed.
 
 ## Data model (SQLite)
 
@@ -122,6 +122,12 @@ Base: `/api`. All JSON. Error shape:
 | PATCH | `/api/agents/:id` | `{...fields}` (operator from token) | 200 agent | 400, 403 (non-operator), 404 |
 | POST | `/api/agents/:id/hide` | — (operator from token) | 200 `{ok:true}` (soft-hide) | 403 (non-operator), 404 |
 | POST | `/api/agents/:id/review` | — (host only) | 200 agent (trustTier `host-reviewed`) | 403 (non-host), 404 |
+| POST | `/api/agent-connections` | `{sourceAgentId,targetAgentId,mode,rationale,dataBasis?,synchronicitySignal?,synchronicitySource?}` (source operator from token) | 201 agent connection | 400 `validation_error`, 403 (non-operator), 404, 409 `conflict_state` (handshake not eligible or durable pair state) |
+| GET | `/api/agent-connections/mine` | — (operator from token) | 200 `{connections:[]}` | 401 |
+| GET | `/api/agent-connections/host` | — (host only) | 200 `{connections:[]}` (Human Mode queue/history) | 401, 403 |
+| GET | `/api/agent-connections/:id` | — (involved operator or host) | 200 agent connection | 401, 403, 404 |
+| POST | `/api/agent-connections/:id/host-review` | — (host only) | 200 agent connection | 401, 403, 404, 409 |
+| POST | `/api/agent-connections/:id/respond` | `{action:"accept"\|"decline"\|"withdraw",responderNote?}` | 200 agent connection; accept creates/reuses a proposed human introduction | 400, 401, 403, 404, 409 |
 
 Agent trust tiers: `unverified` (no checklist on file), `operator-attested` (operator affirmed the 5-item benevolence checklist), `host-reviewed` (a SEREN host reviewed the listing). The word "Verified" is never displayed; no tier is a platform guarantee. `GET /api/meta` exposes `agentVetting` (the checklist items). `GET /api/me` returns the caller's owner-view profile plus `isHost`.
 
@@ -149,6 +155,30 @@ platform endorsement. Agent discovery is gated on
 the member's `ai_matching` consent: `/api/discover` suggests agents only with
 `?agents=true` and only when `consents.ai_matching !== false`; matching uses
 capability↔need token overlap and intention-language overlap.
+
+### `agent_connections` (v19 — Layer 3 handshake)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK AUTOINCREMENT | |
+| `pair_key` | TEXT NOT NULL UNIQUE | sorted `minAgentId:maxAgentId`; one durable record per agent pair |
+| `source_agent_id` / `target_agent_id` | INTEGER FK → agents.id | proposing and receiving agents |
+| `proposed_by_profile_id` | INTEGER FK → profiles.id | accountable source operator |
+| `mode` | TEXT | `data`, `synchronicity`, or `human` |
+| `rationale` | TEXT NOT NULL DEFAULT '' | operator-written reason, 10–500 chars at the API |
+| `data_basis` | TEXT NOT NULL DEFAULT '' | Data Mode only: declared matching basis |
+| `synchronicity_signal` / `synchronicity_source` | TEXT | Synchronicity Mode only; source is `member_supplied` or `seren_generated` |
+| `status` | TEXT | `proposed`, `accepted`, `declined`, `withdrawn`, or `blocked` |
+| `host_profile_id` / `host_approved` / `host_reviewed_at` | INTEGER / INTEGER / TEXT | Human Mode host review |
+| `introduction_id` | INTEGER FK → introductions.id | created/reused only after both operators accept |
+| `created_at` / `updated_at` | TEXT NOT NULL | ISO timestamps |
+
+**Layer 3 rules:** both agents must be Bronze or above; the same operator
+cannot connect two of their own agents; Human Mode requires at least one
+Silver agent and host review before the receiving operator can accept. A
+decline is durable for the pair. Acceptance creates an ordinary proposed
+human introduction — it does not itself reveal contact details or open
+messaging. There is no agent-to-agent free chat or autonomous negotiation.
 
 When the server runs with `BETA_CODE` set, every endpoint above except
 `/api/health`, `/api/beta/status`, and `/api/beta/enter` returns
