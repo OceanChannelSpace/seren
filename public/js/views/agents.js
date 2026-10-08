@@ -18,9 +18,26 @@ const TIER_COPY = {
   'host-reviewed': { label: 'Host-reviewed', cls: 'pill-good' },
 };
 
+// World 3.0 ethical-maturity ladder (docs/SEREN_AI_CONSTITUTION.md §5).
+// Bronze = operator attested the benevolence checklist; Silver = a human
+// host reviewed the listing. Gold/Platinum are aspirational rungs that
+// require a measurement programme and independent stewardship review that
+// do not exist yet — they are shown only so the path is public, never
+// assigned to a listing today.
+const CERT_COPY = {
+  'ungraded': { label: 'Ungraded', cls: 'pill-muted' },
+  'bronze': { label: 'Bronze · Attested', cls: '' },
+  'silver': { label: 'Silver · Host-reviewed', cls: 'pill-good' },
+};
+
 function tierPill(a) {
   const t = TIER_COPY[a.trustTier] || TIER_COPY['unverified'];
   return `<span class="pill ${t.cls}">${esc(t.label)}</span>`;
+}
+
+function certPill(a) {
+  const c = CERT_COPY[a.certTier] || CERT_COPY['ungraded'];
+  return `<span class="pill ${c.cls}">${esc(c.label)}</span>`;
 }
 
 function agentCardFull(a, profileId, isHost, onChanged) {
@@ -29,7 +46,7 @@ function agentCardFull(a, profileId, isHost, onChanged) {
   const head = el(`<div class="person-head"></div>`);
   head.appendChild(avatarFor(a.name || 'Agent'));
   const who = el(`<div class="who"></div>`);
-  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span> ${tierPill(a)}</h3>`));
+  who.appendChild(el(`<h3>${esc(a.name || 'Unnamed agent')} <span class="pill">AI</span> ${tierPill(a)} ${certPill(a)}</h3>`));
   if (a.operatorName) who.appendChild(el(`<p class="person-sub">Registered by ${esc(a.operatorName)}</p>`));
   head.appendChild(who);
   c.appendChild(head);
@@ -184,7 +201,14 @@ function tierExplainer() {
   const list = el(`<div></div>`);
   list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill pill-muted">Unverified</span> <span class="field-hint">Listed without the benevolence checklist. No attestations on file.</span></p>`));
   list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill">Operator-attested</span> <span class="field-hint">The operator affirmed five benevolence criteria: no manipulation, no covert data harvesting, an accountable human operator, a clear purpose, and respect for consent. Their declaration, not a platform verification.</span></p>`));
-  list.appendChild(el(`<p style="margin:0"><span class="pill pill-good">Host-reviewed</span> <span class="field-hint">A SEREN host reviewed this listing. Still the operator's declaration, not a guarantee.</span></p>`));
+  list.appendChild(el(`<p style="margin-bottom:1rem"><span class="pill pill-good">Host-reviewed</span> <span class="field-hint">A SEREN host reviewed this listing. Still the operator's declaration, not a guarantee.</span></p>`));
+  list.appendChild(el(`<h3 style="margin-top:0">Ethical maturity (World 3.0 ladder)</h3>`));
+  list.appendChild(el(`<p class="field-hint" style="margin-bottom:0.5rem">Each listing also carries a maturity level, adapted from the Ethical AI Certification and Maturity Model™ (Matthew James Bailey, Inventing World 3.0) and measured against SEREN's AI Constitution. It tracks evidence, not promises:</p>`));
+  list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill pill-muted">Ungraded</span> <span class="field-hint">Nothing codified or attested yet.</span></p>`));
+  list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill">Bronze · Attested</span> <span class="field-hint">The operator affirmed the five benevolence criteria. A declaration, not a verification.</span></p>`));
+  list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill pill-good">Silver · Host-reviewed</span> <span class="field-hint">A human SEREN host reviewed the listing. Still the operator's declaration, never a platform guarantee.</span></p>`));
+  list.appendChild(el(`<p style="margin-bottom:0.5rem"><span class="pill pill-muted">Gold · Measured</span> <span class="field-hint">Aspirational: sustained measured compliance against the Constitution over time. Not yet awarded to any listing.</span></p>`));
+  list.appendChild(el(`<p style="margin:0"><span class="pill pill-muted">Platinum · Stewarded</span> <span class="field-hint">Aspirational: independent stewardship review. Not yet awarded to any listing.</span></p>`));
   c.appendChild(list);
   return c;
 }

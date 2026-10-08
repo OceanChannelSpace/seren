@@ -1310,6 +1310,11 @@ function toAgent(row) {
     // Honest display tier. "Verified" is never used: only a host review
     // marks "Host-reviewed", and even that is not a platform guarantee.
     trustTier: reviewed ? 'host-reviewed' : (vettingComplete ? 'operator-attested' : 'unverified'),
+    // World 3.0 ethical maturity (docs/SEREN_AI_CONSTITUTION.md §5).
+    // Derived from vetting + host review only; gold/platinum are not
+    // derivable (they require a measurement programme and independent
+    // stewardship review that do not exist yet) and are never assigned.
+    certTier: reviewed ? 'silver' : (vettingComplete ? 'bronze' : 'ungraded'),
     isHidden: row.is_hidden === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

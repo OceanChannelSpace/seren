@@ -361,6 +361,16 @@ export const BEACON_INTENTIONS = Object.freeze([
   'conversation', 'practice_partner', 'collaborator', 'local_connection', 'open',
 ]);
 
+// World 3.0 ethical-maturity note: the display tiers above (Unverified /
+// Operator-attested / Host-reviewed) are SEREN's own evidence ladder.
+// docs/SEREN_AI_CONSTITUTION.md §5 maps them onto the Bronze–Platinum
+// maturity vocabulary adapted from Matthew James Bailey's Ethical AI
+// Certification and Maturity Model™ (Ungraded -> Bronze -> Silver; Gold
+// "Measured" and Platinum "Stewarded" are aspirational and not assigned
+// until a measurement programme and independent stewardship review exist).
+// The user-facing label derivation lives in db.js (certTier); this block
+// exists so the mapping is discoverable from the vetting constants.
+
 // Agent vetting checklist: the concrete benevolence criteria an operator
 // attests to when registering an agent. All five must be affirmed at
 // registration. These are the operator's declarations — not platform

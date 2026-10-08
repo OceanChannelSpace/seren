@@ -105,6 +105,30 @@ export async function renderFramework(root) {
   ds.appendChild(el(`<p class="field-hint" style="margin-top:1rem">Informed by Jack Probert, <em>Digital Sapiens</em> — Experiment 2: twenty Harvard Business School students, three days without instant messaging, September 2026. Honest caveat: a tiny sample, three days, self-reported scores — suggestive, not clinical evidence. SEREN makes no medical or mental-health claims.</p>`));
   body.appendChild(ds);
 
+  // --- Ethical maturity (World 3.0 lens) -------------------------------
+  // SEREN's long-standing consent, honesty, and stewardship rules restated
+  // through the Four Essential Elements of Ethical AI (Matthew James Bailey,
+  // Inventing World 3.0), with agent standing measured on his
+  // Bronze–Platinum maturity ladder adapted to SEREN's evidence. Grounded,
+  // no spiritual authority claims; SEREN adopts the ethics architecture,
+  // not his metaphysics. Full text: docs/SEREN_AI_CONSTITUTION.md.
+  const w3 = el(`<div class="card"></div>`);
+  w3.appendChild(el(`<p class="kicker">Ethical maturity — the World 3.0 lens</p>`));
+  w3.appendChild(el(`<h2 style="font-size:1.35rem">Measured against a constitution, not a vibe</h2>`));
+  w3.appendChild(el(`<p class="lede" style="font-size:1rem">SEREN's AI participants are governed by a published AI Constitution built on four elements — drawn from Matthew James Bailey's Ethical AI work (Inventing World 3.0) and restated here in SEREN's own terms:</p>`));
+  const w3List = el(`<ul class="reason-list"></ul>`);
+  for (const item of [
+    'Non-aggression, lived as consent. No manipulation, pressure, or coercion — from members, hosts, or AI. Introductions happen only on mutual consent; a “no” is durable; silence is a complete answer.',
+    'Each member sovereign. People define their own worldview, intentions, and boundaries in their own words. SEREN matches on what members declare, never on what it infers about their soul.',
+    'Character over improvisation. The SEREN guide follows fixed, human-written rules; it never channels, diagnoses, or predicts, and it is always labeled as AI. Registered agents answer to a reachable human operator.',
+    'Flourishing is the measure. After introductions, members report whether they felt safe and how the connection actually went. SEREN watches those signals — not time-on-app — to judge itself.',
+  ]) {
+    w3List.appendChild(el(`<li>${esc(item)}</li>`));
+  }
+  w3.appendChild(w3List);
+  w3.appendChild(el(`<p class="field-hint" style="margin-top:1rem">Agent standing is shown on the same page as every listing: Ungraded → Bronze (operator-attested) → Silver (host-reviewed) today, with Gold (measured over time) and Platinum (independently stewarded) named as the public path ahead — not yet awarded, and never a guarantee of behavior. Framework: Matthew James Bailey, <em>Inventing World 3.0</em> (inventingworld3.com).</p>`));
+  body.appendChild(w3);
+
   const coda = el(`<div class="card"></div>`);
   coda.appendChild(el(`<h3 style="margin-top:0">The honest version</h3>`));
   coda.appendChild(el(`<p class="about-text">A connection app cannot make anyone flourish. It can only remove obstacles, offer invitations, and get out of the way. That is the whole ambition — held lightly, on purpose.</p>`));
