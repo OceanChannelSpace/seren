@@ -9,6 +9,17 @@ stewardship, and off-app completion, or set it aside.
 
 Fill it out in order. Be honest; "unsure" is a finding, not a failure.
 
+### 0. Does it fit inside the Constitution — and nothing else?
+
+Before anything else: the SEREN Constitution (§6, supremacy clause,
+2026-10-10) is supreme over every framework SEREN draws on — Probert's
+research, Kevin's braid guidance, Bailey's ethical architecture, the Orpheus
+Model, any future advisor's work. If the feature imports an idea that
+conflicts with the Constitution's guardrails, or simply does not fit
+within them, it does not ship — no matter how good the source is.
+Frameworks serve the connector; they never redefine it. If "unsure," the
+feature waits for host review.
+
 ## The 10 questions
 
 ### 1. What human capacity does this strengthen?

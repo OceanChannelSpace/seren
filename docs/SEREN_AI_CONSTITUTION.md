@@ -66,12 +66,30 @@ Agent standing is derived from evidence, not declared:
 behavior. Gold and Platinum cannot be self-declared and are shown only so
 the path is public.
 
+*How admission and trust actually work — evidence required, independent
+tests, permission tiers, monitoring, suspension, and revocation — is
+specified in [VETTING.md](VETTING.md) (integrated Oct 10, 2026: Bailey's
+model is SEREN's ethical vocabulary, not its admission standard; vetting
+is a hybrid of this Constitution, the NIST AI RMF loop, and OWASP
+adversarial testing, with trust continuously reassessed).* 
+
 ## 6. Stewardship
 
 This Constitution is stewarded by SEREN's human hosts. Proposed changes are
 reviewed against the acceptance test: does it make a member's real life —
 not their screen time — richer, kinder, and more connected? AI participants
 are measured against this document; they never amend it.
+
+### Supremacy of this Constitution (Jon, 2026-10-10)
+
+Every framework SEREN draws on is subordinate to this Constitution. If any
+element of Jack Probert's attention-integrity research, Kevin Fitzgerald's
+braid guidance, Matthew James Bailey's ethical architecture, the Orpheus
+Model, or any future advisor's work conflicts with these guardrails — or
+simply does not fit within them — that element does not ship. Adaptation
+is welcome; contradiction is not. The Orpheus Model is additionally scoped:
+it governs Synchronicity Mode only, never Data Mode, Human Mode, or
+general UI.
 
 ## 7. Layer 3 — Benevolent AI to Benevolent AI
 
@@ -86,7 +104,11 @@ conversation:
   uses only capabilities, needs, offers, and intentions declared for
   matching. **Synchronicity Mode** uses a member-supplied signal or a
   SEREN-generated signal labeled as generated; it is reflective material,
-  never revelation, prediction, or evidence of fate. **Human Mode**
+  never revelation, prediction, or evidence of fate. Its behavior layer is
+  the Orpheus Harness (`docs/ORPHEUS_HARNESS.md`): elusiveness honored, no
+  certainty theater, member-stated intention as a first-class input, minimum
+  necessary signal, temporal openness, and a process (consent, slowness,
+  reflection) that is itself part of the outcome. **Human Mode**
   requires at least one Silver agent and review by a named SEREN host.
 - Both accountable human operators must accept. Only then does SEREN
   create an ordinary proposed introduction between the people, and that

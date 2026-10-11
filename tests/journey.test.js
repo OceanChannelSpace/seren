@@ -181,7 +181,7 @@ test('full user journey persists across real server restarts', { timeout: 90000 
     assert.equal(persisted.requesterId, profileId);
     assert.equal(persisted.proposedId, peerId);
     assert.ok(persisted.requestMessage.length > 0);
-    assert.equal(typeof persisted.score, 'number');
+    assert.ok(!('score' in persisted), 'no numeric score leaks on the introduction wire');
 
     // (f) seed members were NOT duplicated on restart
     const all = await api(base2, 'GET', '/api/profiles', undefined, authA);

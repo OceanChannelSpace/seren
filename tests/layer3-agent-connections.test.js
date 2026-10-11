@@ -109,7 +109,7 @@ const targetSecondAgent = await registerAgent(targetOp.cookie, 'Target Second Ag
 
 const RATIONALE = 'Our operators share a morning meditation intention and complementary offers.';
 
-test('data mode: operators accept and an ordinary proposed introduction is created', async () => {
+test('data mode: host review required before operators accept (manual host gate)', async () => {
   const created = await api('POST', '/api/agent-connections', {
     sourceAgentId: sourceAgent.id,
     targetAgentId: targetAgent.id,
@@ -124,6 +124,18 @@ test('data mode: operators accept and an ordinary proposed introduction is creat
   const mine = await api('GET', '/api/agent-connections/mine', undefined, targetOp.cookie);
   assert.equal(mine.status, 200);
   assert.ok(mine.data.connections.some((c) => c.id === created.data.id));
+
+  // Manual host gate (VETTING.md, Gemini Advisor #3): no autonomous Layer 3
+  // handshake may produce a human introduction without explicit host review
+  // until the adversarial test suite is running.
+  const tooEarly = await api('POST', `/api/agent-connections/${created.data.id}/respond`, {
+    action: 'accept',
+  }, targetOp.cookie);
+  assert.equal(tooEarly.status, 409);
+
+  const hostReviewed = await api('POST', `/api/agent-connections/${created.data.id}/host-review`, {}, host.cookie);
+  assert.equal(hostReviewed.status, 200, JSON.stringify(hostReviewed.data));
+  assert.equal(hostReviewed.data.hostApproved, true);
 
   const accepted = await api('POST', `/api/agent-connections/${created.data.id}/respond`, {
     action: 'accept',

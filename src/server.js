@@ -260,7 +260,8 @@ function toWireIntroduction(intro) {
     proposedId: intro.proposedId,
     intention: intro.intention,
     note: intro.note,
-    score: intro.score,
+    // No numeric score on the wire (Gemini Advisor #2, 2026-10-10):
+    // ranking stays engine-internal; members see qualitative reasons only.
     status: intro.status,
     connectionType: intro.connectionType,
     requestMessage: intro.requestMessage,
@@ -737,11 +738,7 @@ function agentConnectionConflict(res, result, fallback) {
   }
   if (result === 'host_review_required') {
     return err(res, 409, ERROR_CODES.CONFLICT_STATE,
-      'Human Mode needs a SEREN host review before the receiving operator can accept.');
-  }
-  if (result === 'not_human_mode') {
-    return err(res, 409, ERROR_CODES.CONFLICT_STATE,
-      'Host review applies only to Human Mode agent connections.');
+      'A SEREN host review is required before the receiving operator can accept.');
   }
   if (result === 'invalid') {
     return err(res, 409, ERROR_CODES.CONFLICT_STATE, fallback);
@@ -987,10 +984,9 @@ app.post('/api/introductions/request', (req, res) => {
       interests: best.candidate.interests,
       intention: best.candidate.intention,
     },
-    scoreBreakdown: {
+    evidence: {
       sharedInterests: best.sharedInterests,
       sharedKeywords: best.sharedKeywords,
-      score: best.score,
     },
   });
 });
@@ -1246,6 +1242,10 @@ app.post('/api/introductions/:id/withdraw', transition('withdrawn', 'requester')
 
 const FLOURISHING_QUESTIONS = [
   { key: 'real_world_action', text: 'Did SEREN help you take a meaningful action in the real world this week?', kind: 'yesno' },
+  // Gemini Advisor #5 (2026-10-10): the 24-hour real-life completion metric
+  // as a hard telemetry datapoint — does SEREN foster real-world agency or
+  // just become another reflective chat loop?
+  { key: 'next_24_hours', text: 'What would you like to bring into your real life in the next 24 hours?', kind: 'text', optional: true },
   { key: 'connected', text: 'Did you feel more connected to others this week?', kind: 'scale1to5' },
   { key: 'clarity_agency', text: 'Did this experience increase your clarity or sense of agency?', kind: 'scale1to5' },
   { key: 'pressure', text: 'Did you feel pressured, confused, anxious, or dependent on the app?', kind: 'yesno' },

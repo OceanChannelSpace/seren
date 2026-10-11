@@ -1504,9 +1504,16 @@ export function getAgentConnectionByPair(sourceAgentId, targetAgentId) {
 
 export function evaluateAgentConnectionHandshake(source, target, mode, { hostApproved = false } = {}) {
   const issues = [];
+  // Gemini Advisor #3 (2026-10-10), adopted into VETTING.md: an operator's
+  // signed checklist is a self-declaration, not a safety guarantee. Until
+  // the adversarial test suite (OWASP Top 10 for LLMs, agent-edition
+  // battery) is actually running, EVERY Layer 3 connection requires explicit
+  // human-host review before it can produce a human introduction.
+  // Flip to true only when the battery is operational.
+  const ADVERSARIAL_SUITE_LIVE = false;
   if (!source || !target) {
     issues.push('Both agents must exist.');
-    return { eligible: false, issues, requiresHostReview: mode === 'human', hostApproved };
+    return { eligible: false, issues, requiresHostReview: !ADVERSARIAL_SUITE_LIVE, hostApproved };
   }
   if (Number(source.id) === Number(target.id)) issues.push('An agent cannot connect to itself.');
   if (source.isHidden || target.isHidden) issues.push('Hidden agents cannot connect.');
@@ -1559,7 +1566,7 @@ export function evaluateAgentConnectionHandshake(source, target, mode, { hostApp
   return {
     eligible: issues.length === 0,
     issues,
-    requiresHostReview: mode === 'human',
+    requiresHostReview: !ADVERSARIAL_SUITE_LIVE,
     hostApproved,
   };
 }
@@ -1638,7 +1645,9 @@ export function listAgentConnectionsForHost() {
 export function hostReviewAgentConnection(id, hostProfileId) {
   const conn = getAgentConnection(id);
   if (!conn) return null;
-  if (conn.mode !== 'human') return 'not_human_mode';
+  // Manual host gate (VETTING.md): host review applies to every mode until
+  // the adversarial suite is live — the old human-mode-only restriction is
+  // removed.
   if (conn.status !== 'proposed') return 'invalid';
   const now = new Date().toISOString();
   db.prepare(`

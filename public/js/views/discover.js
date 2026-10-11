@@ -320,25 +320,10 @@ export async function renderDiscover(root, ctx) {
       pb.appendChild(resumeBtn);
       pauseWrap.appendChild(pb);
     }
-    // First-run serendipity disclosure: the wild card is permissioned, so the
-    // permission has to be understandable — not a buried toggle. Shown once.
-    const cs = me.consentSettings || {};
-    let noticeSeen = true;
-    try { noticeSeen = localStorage.getItem(`${STORAGE_PREFIX}.serendipityNoticeSeen`) === '1'; } catch { /* noop */ }
-    if (cs.serendipity !== false && !noticeSeen) {
-      const nb = el(`
-        <div class="notice-banner" role="status">
-          <p><strong>A note on wild cards.</strong> Discover sometimes includes one clearly-labeled wild card — a genuine member outside your obvious overlaps, offered to widen the circle. You can turn this off any time in <a href="#/me">Me → Discovery</a>.</p>
-        </div>`);
-      const okBtn = el(`<button type="button" class="btn btn-secondary btn-small">Got it</button>`);
-      okBtn.addEventListener('click', () => {
-        try { localStorage.setItem(`${STORAGE_PREFIX}.serendipityNoticeSeen`, '1'); } catch { /* noop */ }
-        nb.remove();
-        announce('Notice dismissed.');
-      });
-      nb.appendChild(okBtn);
-      pauseWrap.appendChild(nb);
-    }
+    // (2026-10-10, Jon's decision) The first-run serendipity notice banner was
+    // removed: honesty about how SEREN works lives in the Framework/Trust
+    // thesis pages, not in per-step disclaimers. Members use their own
+    // discernment; the wild card setting remains in Me → Discovery.
   } catch (e) {
     body.querySelector('.loading-block')?.remove();
     banner.show(api.friendlyError(e));

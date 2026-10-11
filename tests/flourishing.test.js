@@ -104,9 +104,12 @@ test('GET /api/flourishing/questions returns the exact question set', async () =
   const r = await api('GET', '/api/flourishing/questions', undefined, alice.cookie);
   assert.equal(r.status, 200);
   const qs = r.data.questions;
-  assert.equal(qs.length, 13);
+  assert.equal(qs.length, 14);
   assert.deepEqual(qs.map((q) => q.key), [
-    'real_world_action', 'connected', 'clarity_agency', 'pressure',
+    'real_world_action',
+    // Gemini Advisor #5 (2026-10-10): 24-hour real-life completion metric.
+    'next_24_hours',
+    'connected', 'clarity_agency', 'pressure',
     'suggestion_volume', 'supportive_now', 'offline_time', 'ai_humility',
     'pause_autonomy',
     // Digital Sapiens layer: attention integrity questions.
@@ -115,6 +118,7 @@ test('GET /api/flourishing/questions returns the exact question set', async () =
   const kinds = Object.fromEntries(qs.map((q) => [q.key, q.kind]));
   assert.deepEqual(kinds, {
     real_world_action: 'yesno',
+    next_24_hours: 'text',
     connected: 'scale1to5',
     clarity_agency: 'scale1to5',
     pressure: 'yesno',

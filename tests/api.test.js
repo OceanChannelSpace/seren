@@ -253,25 +253,26 @@ test('POST /api/introductions/request matches and returns 201 with breakdown', a
   }, requester);
   assert.equal(status, 201);
 
-  const { introduction, proposed, scoreBreakdown } = json;
+  const { introduction, proposed, evidence } = json;
   assert.equal(introduction.requesterId, requester.id);
   assert.equal(introduction.proposedId, candidate.id);
   assert.equal(introduction.proposedId, proposed.id);
   assert.equal(introduction.status, 'proposed');
   assert.ok(introduction.note.length > 0);
+  assert.ok(!('score' in introduction), 'no numeric score leaks on the introduction wire');
+  assert.ok(!('scoreBreakdown' in json), 'scoreBreakdown renamed to evidence');
 
   assert.deepEqual(Object.keys(proposed).sort(), ['id', 'intention', 'interests', 'name']);
   assert.equal(proposed.name, candidate.name);
   assert.ok(!('email' in proposed), 'proposed profile must not include email');
 
-  // 1 shared interest (2 pts) + 8 shared keywords (8 pts) = 10.
-  assert.deepEqual(scoreBreakdown.sharedInterests, ['tarot']);
+  // Qualitative evidence only — never a numeric score in the response.
+  assert.deepEqual(evidence.sharedInterests, ['tarot']);
   assert.deepEqual(
-    scoreBreakdown.sharedKeywords,
+    evidence.sharedKeywords,
     ['tarot', 'study', 'buddy', 'weekly', 'card', 'pulls', 'dream', 'journaling'],
   );
-  assert.equal(scoreBreakdown.score, 10);
-  assert.equal(scoreBreakdown.score, 2 * scoreBreakdown.sharedInterests.length + scoreBreakdown.sharedKeywords.length);
+  assert.ok(!('score' in evidence), 'evidence carries reasons, not a score');
 });
 
 test('POST /api/introductions/request without a session token → 401, never data', async () => {
@@ -420,7 +421,7 @@ test('GET /api/introductions lists the caller\'s intros; identity comes from the
     assert.equal(found.proposedName, 'Lister Two');
     assert.equal(found.status, 'proposed');
     assert.ok(found.note.length > 0);
-    assert.equal(typeof found.score, 'number');
+    assert.ok(!('score' in found), 'no numeric score leaks on the introduction wire');
     assert.ok(found.createdAt);
   }
 
